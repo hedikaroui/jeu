@@ -4,7 +4,13 @@ CC      = gcc
 TARGET  = jeu
 
 SRCS    = main.c \
-          game_states.c
+          game_states.c \
+          songs.c \
+          characters.c \
+          backgrounds.c \
+          buttons.c \
+          fonts.c \
+          assets_catalog.c
 
 OBJS    = $(SRCS:.c=.o)
 

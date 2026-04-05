@@ -1,4 +1,5 @@
 #include "game.h"
+#include "assets_catalog.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -31,28 +32,26 @@ int Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer) {
     if (!*renderer) { printf("Erreur renderer: %s\n", SDL_GetError()); return 0; }
 
     /* ── Assets menu ── */
-    game->background   = IMG_LoadTexture(*renderer, "background.png");
+    game->background   = IMG_LoadTexture(*renderer, GAME_ASSETS.backgrounds.menu);
 
     /* Logo top right – 300x300 */
-    game->logoTexture  = IMG_LoadTexture(*renderer, "logo.png");
+    game->logoTexture  = IMG_LoadTexture(*renderer, GAME_ASSETS.characters.logo);
     game->logoRect     = (SDL_Rect){WIDTH - 320, 20, 300, 300};
 
     game->titleTexture = NULL;
     game->trapTexture  = NULL;
 
-    game->music = Mix_LoadMUS("jingle.mp3");
-    game->Sound = Mix_LoadWAV("magic.wav");
+    game->music = Mix_LoadMUS(GAME_ASSETS.songs.menu_music);
+    game->Sound = Mix_LoadWAV(SOUND_HOVER);
 
     /* Boutons : 5 empiles verticalement, LEFT side, taille augmentée 450x130 */
     int bw = 450, bh = 130, bsp = 25;
     int bx  = 40;
     int by0 = 180;
 
-    const char *normalFiles[] = {"j1.png","o1.png","q1.png","m1.png","h1.png"};
-    const char *hoverFiles[]  = {"j2.png","o2.png","q2.png","m2.png","h2.png"};
     for (int i = 0; i < 5; i++) {
-        game->buttons[i].normalTex = IMG_LoadTexture(*renderer, normalFiles[i]);
-        game->buttons[i].hoverTex  = IMG_LoadTexture(*renderer, hoverFiles[i]);
+        game->buttons[i].normalTex = IMG_LoadTexture(*renderer, MENU_BUTTON_NORMAL[i]);
+        game->buttons[i].hoverTex  = IMG_LoadTexture(*renderer, MENU_BUTTON_HOVER[i]);
         game->buttons[i].rect      = (SDL_Rect){bx, by0 + i*(bh+bsp), bw, bh};
         game->buttons[i].selected  = 0;
     }
@@ -90,12 +89,12 @@ int Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer) {
     memset(&game->ps_bg, 0, sizeof(game->ps_bg));
 
     /* ── Leaderboard assets ── */
-    game->msGreTex  = IMG_LoadTexture(*renderer, "MSgre.png");
-    game->msRedTex  = IMG_LoadTexture(*renderer, "MSred.png");
-    game->leaderTex = IMG_LoadTexture(*renderer, "option_bg.png");
-    game->click     = Mix_LoadWAV("click.mp3");
-    game->scoreJ1Tex = IMG_LoadTexture(*renderer, "j1.png");
-    game->scoreJ2Tex = IMG_LoadTexture(*renderer, "j2.png");
+    game->msGreTex  = IMG_LoadTexture(*renderer, SCORE_BACK_HOVER);
+    game->msRedTex  = IMG_LoadTexture(*renderer, SCORE_BACK_NORMAL);
+    game->leaderTex = IMG_LoadTexture(*renderer, GAME_ASSETS.backgrounds.leaderboard);
+    game->click     = Mix_LoadWAV(SOUND_CLICK);
+    game->scoreJ1Tex = IMG_LoadTexture(*renderer, SCORE_BUTTON_NORMAL);
+    game->scoreJ2Tex = IMG_LoadTexture(*renderer, SCORE_BUTTON_HOVER);
     game->startHeartTex = NULL;
     game->startTextTex  = NULL;
     game->startTextRect = (SDL_Rect){0, 0, 0, 0};
@@ -128,7 +127,7 @@ int Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer) {
     game->optionsLoaded       = 0;
 
     /* ── Games init ── */
-    game->menuGiftTex         = IMG_LoadTexture(*renderer, "gift-box_808639.png");
+    game->menuGiftTex         = IMG_LoadTexture(*renderer, GAME_ASSETS.backgrounds.gift);
     game->gamesImg            = NULL;
     game->gamesLoaded         = 0;
     memset(&game->gamesRect, 0, sizeof(game->gamesRect));
@@ -144,9 +143,9 @@ int Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer) {
     game->quizLaugh           = NULL;
 
     /* Police leaderboard */
-    game->font = TTF_OpenFont("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32);
+    game->font = TTF_OpenFont(GAME_ASSETS.fonts.system_bold, 32);
     if (!game->font)
-        game->font = TTF_OpenFont("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 32);
+        game->font = TTF_OpenFont(GAME_ASSETS.fonts.system_regular, 32);
 
     if (game->music) Mix_PlayMusic(game->music, -1);
 
@@ -458,19 +457,19 @@ void Leaderboard_Affichage(Game *game, SDL_Renderer *renderer) {
 int Save_Charger(Game *game, SDL_Renderer *renderer) {
     if (game->saveBg) return 1;
 
-    game->saveBg = IMG_LoadTexture(renderer, "BG.png");
+    game->saveBg = IMG_LoadTexture(renderer, GAME_ASSETS.backgrounds.save_primary);
     if (!game->saveBg)
-        game->saveBg = IMG_LoadTexture(renderer, "LB.jpg");
+        game->saveBg = IMG_LoadTexture(renderer, GAME_ASSETS.backgrounds.save_fallback);
     if (!game->saveBg) { printf("Erreur BG.png/LB.jpg: %s\n", IMG_GetError()); return 0; }
 
-    game->saveMusic = Mix_LoadMUS("save_music.mp3");
+    game->saveMusic = Mix_LoadMUS(GAME_ASSETS.songs.save_music_primary);
     if (!game->saveMusic)
-        game->saveMusic = Mix_LoadMUS("music.mp3");
+        game->saveMusic = Mix_LoadMUS(GAME_ASSETS.songs.save_music_fallback);
     if (game->saveMusic) Mix_PlayMusic(game->saveMusic, -1);
-    game->saveSound = Mix_LoadWAV("cliq.wav");
+    game->saveSound = Mix_LoadWAV(SOUND_SAVE_CLICK);
 
-    TTF_Font *f = TTF_OpenFont("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36);
-    if (!f) f = TTF_OpenFont("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36);
+    TTF_Font *f = TTF_OpenFont(GAME_ASSETS.fonts.system_bold, 36);
+    if (!f) f = TTF_OpenFont(GAME_ASSETS.fonts.system_regular, 36);
     if (f) {
         SDL_Color white = {255,255,255,255};
         SDL_Color red   = {178,34,34,255};
@@ -488,17 +487,17 @@ int Save_Charger(Game *game, SDL_Renderer *renderer) {
 
     /* Boutons plus grands et mieux centres */
     game->saveButtons[0].rect        = (SDL_Rect){200, 300, 380, 200};
-    game->saveButtons[0].texture     = IMG_LoadTexture(renderer, "yesnoncliq.png");
-    game->saveButtons[0].textureCliq = IMG_LoadTexture(renderer, "yescliq.png");
+    game->saveButtons[0].texture     = IMG_LoadTexture(renderer, SAVE_BUTTON_NORMAL[0]);
+    game->saveButtons[0].textureCliq = IMG_LoadTexture(renderer, SAVE_BUTTON_CLICKED[0]);
     game->saveButtons[1].rect        = (SDL_Rect){700, 300, 380, 200};
-    game->saveButtons[1].texture     = IMG_LoadTexture(renderer, "nonocliq.png");
-    game->saveButtons[1].textureCliq = IMG_LoadTexture(renderer, "nocliq.png");
+    game->saveButtons[1].texture     = IMG_LoadTexture(renderer, SAVE_BUTTON_NORMAL[1]);
+    game->saveButtons[1].textureCliq = IMG_LoadTexture(renderer, SAVE_BUTTON_CLICKED[1]);
     game->saveButtons[2].rect        = (SDL_Rect){240, 220, 420, 180};
-    game->saveButtons[2].texture     = IMG_LoadTexture(renderer, "sauvnocliq.png");
-    game->saveButtons[2].textureCliq = IMG_LoadTexture(renderer, "sauvcliq.png");
+    game->saveButtons[2].texture     = IMG_LoadTexture(renderer, SAVE_BUTTON_NORMAL[2]);
+    game->saveButtons[2].textureCliq = IMG_LoadTexture(renderer, SAVE_BUTTON_CLICKED[2]);
     game->saveButtons[3].rect        = (SDL_Rect){620, 220, 420, 180};
-    game->saveButtons[3].texture     = IMG_LoadTexture(renderer, "newnocliq.png");
-    game->saveButtons[3].textureCliq = IMG_LoadTexture(renderer, "newcliq.png");
+    game->saveButtons[3].texture     = IMG_LoadTexture(renderer, SAVE_BUTTON_NORMAL[3]);
+    game->saveButtons[3].textureCliq = IMG_LoadTexture(renderer, SAVE_BUTTON_CLICKED[3]);
 
     game->saveEtat    = 0;
     game->clic_bouton = -1;
@@ -631,6 +630,38 @@ static SDL_Rect quizBtnCRect = {530, 430, 150, 120};
 static int quizHoverA = 0, quizHoverB = 0, quizHoverC = 0;
 static int quizSelected = -1;
 
+static Uint32 startPlayIntroStart = 0;
+static SDL_Rect startPlayPlayerRect = {0, 0, 120, 120};
+static Uint32 startPlayLastTick = 0;
+
+typedef struct {
+    double x, y;
+    double vitesse;
+    double acceleration;
+    SDL_Rect position_acc;
+} StartPlayMover;
+
+static StartPlayMover startPlayMover = {0};
+
+static void start_play_reset_mover(void) {
+    startPlayMover.x = (WIDTH - 120) / 2.0;
+    startPlayMover.y = (HEIGHT - 120) / 2.0 + 40.0;
+    startPlayMover.vitesse = 0.0;
+    startPlayMover.acceleration = 0.0;
+    startPlayMover.position_acc = (SDL_Rect){(int)startPlayMover.x, (int)startPlayMover.y, 120, 120};
+    startPlayPlayerRect = startPlayMover.position_acc;
+}
+
+static void start_play_move_mover(Uint32 dt_ms) {
+    double dt = (double)dt_ms / 1000.0;
+    double dx = 0.5 * startPlayMover.acceleration * dt * dt + startPlayMover.vitesse * dt;
+    startPlayMover.x += dx;
+    startPlayMover.vitesse += startPlayMover.acceleration * dt;
+    startPlayMover.position_acc.x = (int)lround(startPlayMover.x);
+    startPlayMover.position_acc.y = (int)lround(startPlayMover.y);
+    startPlayPlayerRect = startPlayMover.position_acc;
+}
+
 static int ps_point_in_rect(SDL_Rect r, int x, int y) {
     return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
@@ -699,7 +730,7 @@ static void ps_handle_text_input(char *buf, int *cursor_pos, SDL_Keycode key) {
 int PlayerSelect_Charger(Game *game, SDL_Renderer *renderer) {
     if (game->ps_loaded) return 1;
 
-    SDL_Surface *surf = IMG_Load("background_main.jpg");
+    SDL_Surface *surf = IMG_Load(GAME_ASSETS.backgrounds.main);
     if (surf) {
         game->ps_bg.texture = SDL_CreateTextureFromSurface(renderer, surf);
         game->ps_bg.width   = surf->w; game->ps_bg.height = surf->h;
@@ -707,7 +738,7 @@ int PlayerSelect_Charger(Game *game, SDL_Renderer *renderer) {
         SDL_FreeSurface(surf);
     } else printf("Avertissement: background_main.jpg introuvable\n");
 
-    game->ps_bg.music = Mix_LoadMUS("background_sound.wav");
+    game->ps_bg.music = Mix_LoadMUS(SOUND_BACKGROUND_LOOP);
     if (game->ps_bg.music) {
         game->ps_bg.music_volume = 48;
         Mix_VolumeMusic(48);
@@ -716,33 +747,33 @@ int PlayerSelect_Charger(Game *game, SDL_Renderer *renderer) {
 
     /* Load hover sound if not already loaded */
     if (!game->click) {
-        game->click = Mix_LoadWAV("click.mp3");
+        game->click = Mix_LoadWAV(SOUND_CLICK);
     }
 
     if (!game->player1Tex)
-        game->player1Tex = IMG_LoadTexture(renderer, "first_player.png");
+        game->player1Tex = IMG_LoadTexture(renderer, GAME_ASSETS.characters.player1);
     if (!game->player2Tex)
-        game->player2Tex = IMG_LoadTexture(renderer, "second_player.png");
+        game->player2Tex = IMG_LoadTexture(renderer, GAME_ASSETS.characters.player2);
     if (!game->gameBgTex)
-        game->gameBgTex = IMG_LoadTexture(renderer, "background_main.jpg");
+        game->gameBgTex = IMG_LoadTexture(renderer, GAME_ASSETS.backgrounds.main);
     if (!game->psJ1Tex)
-        game->psJ1Tex = IMG_LoadTexture(renderer, "j1.png");
+        game->psJ1Tex = IMG_LoadTexture(renderer, SCORE_BUTTON_NORMAL);
     if (!game->psJ2Tex)
-        game->psJ2Tex = IMG_LoadTexture(renderer, "j2.png");
+        game->psJ2Tex = IMG_LoadTexture(renderer, SCORE_BUTTON_HOVER);
     if (!game->psKeyboardTex)
-        game->psKeyboardTex = load_texture_first(renderer, "keyboard_transparant.png", "keyboard_transparent.png", "keyboard_white.png");
+        game->psKeyboardTex = load_texture_first(renderer, CHAR_KEYBOARD_NORMAL_1, CHAR_KEYBOARD_NORMAL_2, CHAR_KEYBOARD_NORMAL_3);
     if (!game->psKeyboardHoverTex)
-        game->psKeyboardHoverTex = IMG_LoadTexture(renderer, "keyboard_yellow.png");
+        game->psKeyboardHoverTex = IMG_LoadTexture(renderer, CHAR_KEYBOARD_HOVER);
     if (!game->psManetteTex)
-        game->psManetteTex = load_texture_first(renderer, "manette_transaprant.png", "manette_transparent.png", "manette.PNG");
+        game->psManetteTex = load_texture_first(renderer, CHAR_MANETTE_NORMAL_1, CHAR_MANETTE_NORMAL_2, CHAR_MANETTE_NORMAL_3);
     if (!game->psManetteHoverTex)
-        game->psManetteHoverTex = IMG_LoadTexture(renderer, "manette_yellow.png");
+        game->psManetteHoverTex = IMG_LoadTexture(renderer, CHAR_MANETTE_HOVER);
     if (!game->psSourisTex)
-        game->psSourisTex = load_texture_first(renderer, "souris_transparant.png", "souris_transparent.png", "souris.PNG");
+        game->psSourisTex = load_texture_first(renderer, CHAR_SOURIS_NORMAL_1, CHAR_SOURIS_NORMAL_2, CHAR_SOURIS_NORMAL_3);
     if (!game->psSourisHoverTex)
-        game->psSourisHoverTex = IMG_LoadTexture(renderer, "souris_yellow.png");
+        game->psSourisHoverTex = IMG_LoadTexture(renderer, CHAR_SOURIS_HOVER);
     if (!game->psScoreBtnTex)
-        game->psScoreBtnTex = IMG_LoadTexture(renderer, "s1.png");
+        game->psScoreBtnTex = IMG_LoadTexture(renderer, PLAYER_SELECT_SCORE_BUTTON);
 
     ps_p1_frame = (SDL_Rect){40, 80, 360, 300};
     ps_p2_frame = (SDL_Rect){WIDTH - 400, 80, 360, 300};
@@ -1093,12 +1124,12 @@ int StartPlay_Charger(Game *game, SDL_Renderer *renderer) {
     if (game->startPlayLoaded) return 1;
 
     if (!game->startHeartTex)
-        game->startHeartTex = IMG_LoadTexture(renderer, "life_game_heart.png");
+        game->startHeartTex = IMG_LoadTexture(renderer, GAME_ASSETS.backgrounds.start_heart);
 
     if (!game->startTextTex) {
-        TTF_Font *f = TTF_OpenFont("hello.ttf", 68);
-        if (!f) f = TTF_OpenFont("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 68);
-        if (!f) f = TTF_OpenFont("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 68);
+        TTF_Font *f = TTF_OpenFont(GAME_ASSETS.fonts.hello, 68);
+        if (!f) f = TTF_OpenFont(GAME_ASSETS.fonts.system_bold, 68);
+        if (!f) f = TTF_OpenFont(GAME_ASSETS.fonts.system_regular, 68);
         if (f) {
             SDL_Color white = {255, 255, 255, 255};
             SDL_Surface *surf = TTF_RenderUTF8_Blended(f, "the game start,go...", white);
@@ -1116,19 +1147,60 @@ int StartPlay_Charger(Game *game, SDL_Renderer *renderer) {
         }
     }
 
+    if (!game->player1Tex)
+        game->player1Tex = IMG_LoadTexture(renderer, GAME_ASSETS.characters.player1);
+
+    startPlayIntroStart = SDL_GetTicks();
+    startPlayLastTick = startPlayIntroStart;
+    start_play_reset_mover();
+
     game->startPlayLoaded = 1;
     return 1;
 }
 
 void StartPlay_LectureEntree(Game *game) {
     SDL_Event e;
+    if (startPlayIntroStart == 0) {
+        startPlayIntroStart = SDL_GetTicks();
+        startPlayLastTick = startPlayIntroStart;
+        start_play_reset_mover();
+    }
+
     while (SDL_PollEvent(&e)) {
         if (e.type == SDL_QUIT) { game->running = 0; return; }
         if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
             game->currentState = STATE_MENU;
             if (game->music) Mix_PlayMusic(game->music, -1);
+            startPlayIntroStart = 0;
+            startPlayLastTick = 0;
             return;
         }
+    }
+
+    if (SDL_GetTicks() - startPlayIntroStart >= 2000) {
+        Uint32 now = SDL_GetTicks();
+        Uint32 dt = (startPlayLastTick == 0) ? 16u : (now - startPlayLastTick);
+        startPlayLastTick = now;
+
+        const Uint8 *keys = SDL_GetKeyboardState(NULL);
+        const double accel = 1700.0;
+        if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A]) {
+            startPlayMover.acceleration = -accel;
+        } else if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D]) {
+            startPlayMover.acceleration = accel;
+        } else {
+            startPlayMover.acceleration = 0.0;
+            startPlayMover.vitesse *= 0.86;
+            if (fabs(startPlayMover.vitesse) < 5.0) startPlayMover.vitesse = 0.0;
+        }
+
+        start_play_move_mover(dt);
+
+        int speedY = 5;
+        if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W])    startPlayMover.y -= speedY;
+        if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S])  startPlayMover.y += speedY;
+        startPlayMover.position_acc.y = (int)lround(startPlayMover.y);
+        startPlayPlayerRect.y = startPlayMover.position_acc.y;
     }
 }
 
@@ -1136,8 +1208,14 @@ void StartPlay_Affichage(Game *game, SDL_Renderer *renderer) {
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
 
-    if (game->startTextTex)
-        SDL_RenderCopy(renderer, game->startTextTex, NULL, &game->startTextRect);
+    Uint32 elapsed = (startPlayIntroStart == 0) ? 0 : (SDL_GetTicks() - startPlayIntroStart);
+    if (elapsed < 2000) {
+        if (game->startTextTex)
+            SDL_RenderCopy(renderer, game->startTextTex, NULL, &game->startTextRect);
+    } else {
+        if (game->gameBgTex) SDL_RenderCopy(renderer, game->gameBgTex, NULL, NULL);
+        if (game->player1Tex) SDL_RenderCopy(renderer, game->player1Tex, NULL, &startPlayPlayerRect);
+    }
 
     if (game->startHeartTex) {
         int hearts = 10;
@@ -1156,6 +1234,16 @@ void StartPlay_Affichage(Game *game, SDL_Renderer *renderer) {
 
 void StartPlay_MiseAJour(Game *game) {
     (void)game;
+    if (startPlayPlayerRect.x < 0) startPlayPlayerRect.x = 0;
+    if (startPlayPlayerRect.y < 0) startPlayPlayerRect.y = 0;
+    if (startPlayPlayerRect.x + startPlayPlayerRect.w > WIDTH)
+        startPlayPlayerRect.x = WIDTH - startPlayPlayerRect.w;
+    if (startPlayPlayerRect.y + startPlayPlayerRect.h > HEIGHT)
+        startPlayPlayerRect.y = HEIGHT - startPlayPlayerRect.h;
+
+    startPlayMover.x = (double)startPlayPlayerRect.x;
+    startPlayMover.y = (double)startPlayPlayerRect.y;
+    startPlayMover.position_acc = startPlayPlayerRect;
     SDL_Delay(16);
 }
 
@@ -1174,20 +1262,20 @@ static int options_mouse_over(SDL_Rect r, int x, int y) {
 int Options_Charger(Game *game, SDL_Renderer *renderer) {
     if (game->optionsLoaded) return 1;
 
-    game->optionsBg          = IMG_LoadTexture(renderer, "options.png");
-    game->volumePlusBtn      = IMG_LoadTexture(renderer, "volumeplus.png");
-    game->volumeMinusBtn     = IMG_LoadTexture(renderer, "volumeminus.png");
-    game->volumeMuteBtn      = IMG_LoadTexture(renderer, "volumemute.png");
-    game->volumeMinusHoverBtn= load_texture_first(renderer, "sound_red.png", "sound_red.png", NULL);
-    game->volumePlusHoverBtn = load_texture_first(renderer, "sound_greend.png", "sound_green.png", NULL);
-    game->volumeMuteHoverBtn = load_texture_first(renderer, "sound_yelllow.png", "sound_yellow.png", NULL);
-    game->fullscreenBtn      = IMG_LoadTexture(renderer, "fullscreen.png");
-    game->normalscreenBtn    = IMG_LoadTexture(renderer, "normalscreen.png");
-    game->optionsClick       = Mix_LoadWAV("sonbref.wav");
+    game->optionsBg          = IMG_LoadTexture(renderer, GAME_ASSETS.backgrounds.options);
+    game->volumePlusBtn      = IMG_LoadTexture(renderer, OPTION_BUTTON_VOLUME_PLUS);
+    game->volumeMinusBtn     = IMG_LoadTexture(renderer, OPTION_BUTTON_VOLUME_MINUS);
+    game->volumeMuteBtn      = IMG_LoadTexture(renderer, OPTION_BUTTON_VOLUME_MUTE);
+    game->volumeMinusHoverBtn= load_texture_first(renderer, OPTION_BUTTON_VOLUME_MINUS_HOVER, OPTION_BUTTON_VOLUME_MINUS_HOVER, NULL);
+    game->volumePlusHoverBtn = load_texture_first(renderer, OPTION_BUTTON_VOLUME_PLUS_HOVER_1, OPTION_BUTTON_VOLUME_PLUS_HOVER_2, NULL);
+    game->volumeMuteHoverBtn = load_texture_first(renderer, OPTION_BUTTON_VOLUME_MUTE_HOVER_1, OPTION_BUTTON_VOLUME_MUTE_HOVER_2, NULL);
+    game->fullscreenBtn      = IMG_LoadTexture(renderer, OPTION_BUTTON_FULLSCREEN);
+    game->normalscreenBtn    = IMG_LoadTexture(renderer, OPTION_BUTTON_NORMALSCREEN);
+    game->optionsClick       = Mix_LoadWAV(SOUND_OPTION_CLICK);
 
     /* Create OPTIONS title texture */
-    TTF_Font *f = TTF_OpenFont("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60);
-    if (!f) f = TTF_OpenFont("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 60);
+    TTF_Font *f = TTF_OpenFont(GAME_ASSETS.fonts.system_bold, 60);
+    if (!f) f = TTF_OpenFont(GAME_ASSETS.fonts.system_regular, 60);
     if (f) {
         SDL_Color white = {255, 255, 255, 255};
         SDL_Surface *surf = TTF_RenderUTF8_Blended(f, "OPTIONS", white);
@@ -1336,17 +1424,17 @@ void Options_MiseAJour(Game *game) {
 int Games_Charger(Game *game, SDL_Renderer *renderer) {
     if (game->gamesLoaded) return 1;
 
-    game->quizBg1   = IMG_LoadTexture(renderer, "quiz_bg1.png");
-    game->quizBg2   = IMG_LoadTexture(renderer, "quiz_bg2.png");
-    game->quizBtnA  = IMG_LoadTexture(renderer, "quiz_A.png");
-    game->quizBtnB  = IMG_LoadTexture(renderer, "quiz_B.png");
-    game->quizBtnC  = IMG_LoadTexture(renderer, "quiz_C.png");
-    game->quizMusic = Mix_LoadMUS("quiz_music.mp3");
-    game->quizBeep  = Mix_LoadWAV("quiz_beep.wav");
-    game->quizBeep2 = Mix_LoadWAV("quiz_beep2.wav");
-    game->quizLaugh = Mix_LoadWAV("quiz_laugh.wav");
-    game->quizFont  = TTF_OpenFont("quiz_arial.ttf", 26);
-    if (!game->quizFont) game->quizFont = TTF_OpenFont("arial.ttf", 26);
+    game->quizBg1   = IMG_LoadTexture(renderer, GAME_ASSETS.backgrounds.quiz_1);
+    game->quizBg2   = IMG_LoadTexture(renderer, GAME_ASSETS.backgrounds.quiz_2);
+    game->quizBtnA  = IMG_LoadTexture(renderer, QUIZ_BUTTON_A);
+    game->quizBtnB  = IMG_LoadTexture(renderer, QUIZ_BUTTON_B);
+    game->quizBtnC  = IMG_LoadTexture(renderer, QUIZ_BUTTON_C);
+    game->quizMusic = Mix_LoadMUS(GAME_ASSETS.songs.quiz_music);
+    game->quizBeep  = Mix_LoadWAV(SOUND_QUIZ_BEEP_1);
+    game->quizBeep2 = Mix_LoadWAV(SOUND_QUIZ_BEEP_2);
+    game->quizLaugh = Mix_LoadWAV(SOUND_QUIZ_LAUGH);
+    game->quizFont  = TTF_OpenFont(GAME_ASSETS.fonts.quiz_primary, 26);
+    if (!game->quizFont) game->quizFont = TTF_OpenFont(GAME_ASSETS.fonts.quiz_fallback, 26);
 
     quizSelected = -1;
     quizHoverA = quizHoverB = quizHoverC = 0;
