@@ -22,7 +22,7 @@ const AssetCatalog GAME_ASSETS = {
         .gift = "backgrounds/gift-box_808639.png",
         .quiz_1 = "backgrounds/quiz_bg1.png",
         .quiz_2 = "backgrounds/quiz_bg2.png",
-        .start_heart = "backgrounds/life_game_heart.png",
+        .start_heart = "buttons/life_game_heart.png",
     },
     .fonts = {
         .system_bold = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",

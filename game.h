@@ -199,6 +199,11 @@ Mix_Music*   ChargerMusique(const char *fichier);
 Mix_Chunk*   ChargerSon    (const char *fichier);
 
 /* ══════════════════════════════════════
+   PROTOTYPES – UI helper
+══════════════════════════════════════ */
+void box_message(SDL_Renderer *renderer, TTF_Font *font, const char *message, SDL_Rect box);
+
+/* ══════════════════════════════════════
    PROTOTYPES – Lifecycle (Initialisation / Liberation)
 ══════════════════════════════════════ */
 int  Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer);

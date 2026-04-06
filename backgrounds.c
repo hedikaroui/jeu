@@ -9,4 +9,4 @@ const char *BG_OPTIONS = "backgrounds/options.png";
 const char *BG_GIFT = "backgrounds/gift-box_808639.png";
 const char *BG_QUIZ_1 = "backgrounds/quiz_bg1.png";
 const char *BG_QUIZ_2 = "backgrounds/quiz_bg2.png";
-const char *BG_START_HEART = "backgrounds/life_game_heart.png";
+const char *BG_START_HEART = "buttons/life_game_heart.png";
