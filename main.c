@@ -25,94 +25,53 @@ int main(int argc, char *argv[])
     Etincelle etincelle;
     LoadEtincelle(&etincelle, renderer, "assets/anim.png", 5, 2);
 
-    DangerZone zones[2] = {
-        { { 200, 150, 100, 80 }, 0.9f, 1 },
-        { { 500, 350, 120, 60 }, 0.4f, 1 }
-    };
-
     GameState state;
     initGameState(&state, (SDL_Rect){ 100, 100, 50, 60 }, 0.0f,
-                  zones, 2, 1.0f);
+                  1.0f);
 
-    int    gauche = 0, droite = 0, haut = 0, bas = 0;
     Uint32 lastTick = SDL_GetTicks();
-    SDL_Event e;
 
     while (m.running) {
 
-        /* Delta time */
         Uint32 now   = SDL_GetTicks();
         float  delta = (now - lastTick) / 1000.0f;
         lastTick     = now;
 
-        /* ── RENDER ── */
         afficherMinimap(&m, renderer, &state, &entite);
         afficherEtincelle(renderer, &etincelle);
+        renderBorder(renderer, m.minimapPosition, state.borderTimer);
         SDL_RenderPresent(renderer);
 
-        /* ── INPUT ── */
-        while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) m.running = 0;
-            if (e.type == SDL_KEYDOWN) {
-                switch (e.key.keysym.sym) {
-                    case SDLK_ESCAPE: m.running = 0; break;
-                    case SDLK_LEFT:   gauche = 1;     break;
-                    case SDLK_RIGHT:  droite = 1;     break;
-                    case SDLK_UP:     haut   = 1;     break;
-                    case SDLK_DOWN:   bas    = 1;     break;
-                    /* Zoom : Z = in, X = out */
-                    case SDLK_z:
-                        state.zoom += ZOOM_STEP;
-                        if (state.zoom > ZOOM_MAX) state.zoom = ZOOM_MAX;
-                        break;
-                    case SDLK_x:
-                        state.zoom -= ZOOM_STEP;
-                        if (state.zoom < ZOOM_MIN) state.zoom = ZOOM_MIN;
-                        break;
-                    default: break;
-                }
-            }
-            if (e.type == SDL_KEYUP) {
-                switch (e.key.keysym.sym) {
-                    case SDLK_LEFT:  gauche = 0; break;
-                    case SDLK_RIGHT: droite = 0; break;
-                    case SDLK_UP:    haut   = 0; break;
-                    case SDLK_DOWN:  bas    = 0; break;
-                    default: break;
-                }
-            }
-        }
+        Lecture(&m, &state);
 
-        /* ── PHYSICS ── */
-        SDL_Rect ancienne = state.posJoueur;
-        UpdateGame(&state.posJoueur, gauche, droite, haut, bas,
+        SDL_Rect new_pos = state.posJoueur;
+        UpdateGame(&new_pos, state.gauche, state.droite, state.haut, state.bas,
                    &state.rotation, &m);
 
-        /* ── COLLISION DETECTION ── */
-        checkCollisionBB(&state.posJoueur, ancienne, &m, &entite, &state);
-        checkCollisionPP(&state.posJoueur, ancienne, &m, maskSurf, &state);
-
-        /* ── EVENT DISPATCH ── */
-        if (state.collisionBBEvent || state.collisionPPEvent) {
-            state.borderTimer = 0.5f;   /* bordure rouge 0.5s */
+        int bb = collisionBB(new_pos, entite.pos);
+        int pp = collisionPP(maskSurf, new_pos);
+        if (!bb && !pp) {
+            state.posJoueur = new_pos;
+            m.playerPosition.x = m.minimapPosition.x + (new_pos.x * m.redimensionnement) / 100;
+            m.playerPosition.y = m.minimapPosition.y + (new_pos.y * m.redimensionnement) / 100;
+        } else {
+            state.collisionBBEvent = bb;
+            state.collisionPPEvent = pp;
+            state.borderTimer = 0.5f;
             declencherEtincelle(&etincelle, m.playerPosition, 0);
         }
 
-        /* ── GAME STATE UPDATE ── */
         state.time = now;
 
-        /* Décrément borderTimer */
         if (state.borderTimer > 0.0f) {
             state.borderTimer -= delta;
             if (state.borderTimer < 0.0f) state.borderTimer = 0.0f;
         }
 
-        /* ── VISUAL EFFECTS UPDATE ── */
         updateEtincelle(&etincelle, delta);
 
     }
 
-    /* ── LIBÉRATION ── */
     liberer(&etincelle, &entite, maskSurf, &m);
     if (renderer) SDL_DestroyRenderer(renderer);
     if (window)   SDL_DestroyWindow(window);

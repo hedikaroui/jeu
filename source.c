@@ -1,9 +1,6 @@
 #include "minimap.h"
 #include <stdio.h>
 
-/* ═══════════════════════════════════════════════
- * FENÊTRE / RENDERER
- * ═══════════════════════════════════════════════ */
 
 SDL_Window* InitFenetre(const char *titre, int largeur, int hauteur)
 {
@@ -27,9 +24,6 @@ SDL_Renderer* InitRenderer(SDL_Window *window)
     return r;
 }
 
-/* ═══════════════════════════════════════════════
- * CHARGEMENT DES RESSOURCES
- * ═══════════════════════════════════════════════ */
 
 int LoadRessources(Minimap *m, SDL_Renderer *renderer,
                    const char *bgPath, const char *playerPath,
@@ -59,10 +53,7 @@ int LoadRessources(Minimap *m, SDL_Renderer *renderer,
     return 1;
 }
 
-/* ═══════════════════════════════════════════════
- * FEATURE 3 : worldToMinimap avec zoom
- * Convertit position monde → position minimap.
- * ═══════════════════════════════════════════════ */
+
 SDL_Rect worldToMinimap(Minimap *m, SDL_Rect worldPos, float zoom)
 {
     float factor = (m->redimensionnement * zoom) / 100.0f;
@@ -75,10 +66,7 @@ SDL_Rect worldToMinimap(Minimap *m, SDL_Rect worldPos, float zoom)
     return result;
 }
 
-/* ═══════════════════════════════════════════════
- * FEATURE 1 : renderBorder
- * Bordure rouge si collision récente, blanche sinon. Épaisseur = 3px.
- * ═══════════════════════════════════════════════ */
+
 void renderBorder(SDL_Renderer *renderer, SDL_Rect minimapPos,
                   float borderTimer)
 {
@@ -96,15 +84,7 @@ void renderBorder(SDL_Renderer *renderer, SDL_Rect minimapPos,
     }
 }
 
-/* ═══════════════════════════════════════════════
- * DANGER ZONES avec zoom
- * ═══════════════════════════════════════════════ */
 
-/* ═══════════════════════════════════════════════
- * afficherMinimap
- * Ordre : clear → bg → entité → joueur →
- *         minimap fond → joueur minimap
- * ═══════════════════════════════════════════════ */
 void afficherMinimap(Minimap *m, SDL_Renderer *renderer,
                      GameState *state, Entite *entite)
 {
@@ -113,7 +93,6 @@ void afficherMinimap(Minimap *m, SDL_Renderer *renderer,
 
     SDL_Rect destBG = { 0, 0, WIDTH, HEIGHT };
 
-    /* Background plein écran */
     if (m->background)
         SDL_RenderCopy(renderer, m->background, NULL, &destBG);
     else {
@@ -121,7 +100,6 @@ void afficherMinimap(Minimap *m, SDL_Renderer *renderer,
         SDL_RenderFillRect(renderer, &destBG);
     }
 
-    /* Entité secondaire */
     if (entite->texture)
         SDL_RenderCopy(renderer, entite->texture, NULL, &entite->pos);
     else {
@@ -129,7 +107,6 @@ void afficherMinimap(Minimap *m, SDL_Renderer *renderer,
         SDL_RenderFillRect(renderer, &entite->pos);
     }
 
-    /* Joueur plein écran */
     if (m->playerTexture)
         SDL_RenderCopy(renderer, m->playerTexture, NULL, &state->posJoueur);
     else {
@@ -137,12 +114,10 @@ void afficherMinimap(Minimap *m, SDL_Renderer *renderer,
         SDL_RenderFillRect(renderer, &state->posJoueur);
     }
 
-    /* Fond minimap */
     if (m->background) {
         SDL_RenderCopy(renderer, m->background, NULL, &m->minimapPosition);
     }
 
-    /* Joueur sur la minimap avec zoom */
     SDL_Rect playerMinimap = worldToMinimap(m, state->posJoueur, state->zoom);
     if (m->playerTexture)
         SDL_RenderCopy(renderer, m->playerTexture, NULL, &playerMinimap);
@@ -152,13 +127,7 @@ void afficherMinimap(Minimap *m, SDL_Renderer *renderer,
     }
     m->playerPosition = playerMinimap;
 
-    /* Bordure colorée */
-    renderBorder(renderer, m->minimapPosition, state->borderTimer);
 }
-
-/* ═══════════════════════════════════════════════
- * VISUAL EFFECT SYSTEM – Etincelle
- * ═══════════════════════════════════════════════ */
 
 int LoadEtincelle(Etincelle *e, SDL_Renderer *renderer,
                   const char *path, int nbFrames,
@@ -197,7 +166,6 @@ void declencherEtincelle(Etincelle *e, SDL_Rect posJoueurMinimap,
     e->destRect.y  = posJoueurMinimap.y - e->destRect.h / 2;
 }
 
-/* animateEntity (atelier Animation) */
 void updateEtincelle(Etincelle *e, float delta)
 {
     if (!e->active) return;
@@ -218,7 +186,6 @@ void updateEtincelle(Etincelle *e, float delta)
     }
 }
 
-/* blitEntity (atelier Animation) */
 void afficherEtincelle(SDL_Renderer *renderer, Etincelle *e)
 {
     if (!e->active || !e->spriteSheet) return;
@@ -233,10 +200,6 @@ void libererEtincelle(Etincelle *e)
         e->spriteSheet = NULL;
     }
 }
-
-/* ═══════════════════════════════════════════════
- * LIBÉRATION GLOBALE
- * ═══════════════════════════════════════════════ */
 
 void liberer(Etincelle *etincelle, Entite *entite,
              SDL_Surface *maskSurf, Minimap *m)
@@ -256,10 +219,6 @@ void liberer(Etincelle *etincelle, Entite *entite,
         m->playerTexture = NULL;
     }
 }
-
-/* ═══════════════════════════════════════════════
- * UPDATE SYSTEMS
- * ═══════════════════════════════════════════════ */
 
 void UpdateGame(SDL_Rect *posJoueur, int gauche, int droite,
                 int haut, int bas, float *rotation, Minimap *m)
@@ -283,22 +242,54 @@ void UpdateGame(SDL_Rect *posJoueur, int gauche, int droite,
 }
 
 void initGameState(GameState *state, SDL_Rect posJoueur, float rotation,
-                   DangerZone *zones, int nbZones, float zoom)
+                   float zoom)
 {
     state->posJoueur        = posJoueur;
     state->rotation         = rotation;
-    state->zones            = zones;
-    state->nbZones          = nbZones;
     state->time             = 0;
     state->collisionBBEvent = 0;
     state->collisionPPEvent = 0;
     state->borderTimer      = 0.0f;
     state->zoom             = zoom;
+    state->gauche = 0;
+    state->droite = 0;
+    state->haut = 0;
+    state->bas = 0;
 }
 
-/* ═══════════════════════════════════════════════
- * COLLISION SYSTEM – retourne 0/1 uniquement
- * ═══════════════════════════════════════════════ */
+void Lecture(Minimap *m, GameState *state) {
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) {
+        if (e.type == SDL_QUIT) m->running = 0;
+        if (e.type == SDL_KEYDOWN) {
+            switch (e.key.keysym.sym) {
+                case SDLK_ESCAPE: m->running = 0; break;
+                case SDLK_LEFT:   state->gauche = 1;     break;
+                case SDLK_RIGHT:  state->droite = 1;     break;
+                case SDLK_UP:     state->haut   = 1;     break;
+                case SDLK_DOWN:   state->bas    = 1;     break;
+                case SDLK_z:
+                    state->zoom += ZOOM_STEP;
+                    if (state->zoom > ZOOM_MAX) state->zoom = ZOOM_MAX;
+                    break;
+                case SDLK_x:
+                    state->zoom -= ZOOM_STEP;
+                    if (state->zoom < ZOOM_MIN) state->zoom = ZOOM_MIN;
+                    break;
+                default: break;
+            }
+        }
+        if (e.type == SDL_KEYUP) {
+            switch (e.key.keysym.sym) {
+                case SDLK_LEFT:  state->gauche = 0; break;
+                case SDLK_RIGHT: state->droite = 0; break;
+                case SDLK_UP:    state->haut   = 0; break;
+                case SDLK_DOWN:  state->bas    = 0; break;
+                default: break;
+            }
+        }
+    }
+}
 
 void checkCollisionBB(SDL_Rect *posJoueur, SDL_Rect ancienne,
                       Minimap *m, Entite *entite, GameState *state)
