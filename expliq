@@ -1,0 +1,67 @@
+
+
+Récapitulatif MiniMap (SDL2)
+
+## Structures principales
+- **Camera**
+  - Contient un `SDL_Rect rect` → représente la zone visible de la caméra dans le monde.
+- **Minimap**
+  - `SDL_Window *window` → la fenêtre SDL.
+  - `SDL_Renderer *renderer` → le moteur de rendu.
+  - `SDL_Texture *background` → texture du fond de la minimap.
+  - `SDL_Rect minimapPosition` → position et taille de la minimap sur l’écran.
+  - `SDL_Rect playerPosition` → position et taille du joueur miniature sur la minimap.
+  - `Camera camera` → caméra du monde.
+  - `int redimensionnement` → facteur de réduction pour projeter les coordonnées du monde sur la minimap.
+  - `int running` → booléen pour savoir si la boucle de jeu continue.
+
+---
+
+## Fonctions
+
+### `int InitFenetre(Minimap *m, const char *titre, int largeur, int hauteur)`
+- Initialise SDL et crée une fenêtre.
+- Retourne `1` si succès, `0` si erreur.
+- Met `m->running = 1` pour lancer la boucle de jeu.
+
+---
+
+### `int InitRenderer(Minimap *m)`
+- Crée un renderer associé à la fenêtre.
+- Utilise accélération matérielle + synchronisation verticale.
+- Retourne `1` si succès, `0` si erreur.
+
+---
+
+### `int LoadRessources(Minimap *m, const char *bgPath, int mapX, int mapY, int mapW, int mapH, int pointW, int pointH, int redim)`
+- Initialise SDL_image pour charger des PNG.
+- Charge l’image de fond (`bgPath`) et la convertit en texture.
+- Configure la position et la taille de la minimap (`mapX, mapY, mapW, mapH`).
+- Configure la taille du joueur miniature (`pointW, pointH`).
+- Stocke le facteur de redimensionnement (`redim`).
+- Initialise la caméra à zéro.
+
+---
+
+### `void MAJMinimap(Minimap *m, SDL_Rect posJoueur)`
+- Calcule la position absolue du joueur dans le monde (`posJoueur + camera`).
+- Projette cette position sur la minimap en appliquant le facteur de réduction.
+- Met à jour `m->playerPosition`.
+
+---
+
+### `void afficherMinimap(Minimap *m)`
+- Affiche le fond de la minimap (`m->background`).
+- Dessine le joueur miniature en rouge (`m->playerPosition`).
+
+---
+
+### `void libererMinimap(Minimap *m)`
+- Détruit les textures, renderer et fenêtre.
+- Met les pointeurs à `NULL` pour éviter les fuites mémoire.
+
+---
+
+
+
+
