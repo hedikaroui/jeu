@@ -1,7 +1,6 @@
 #include "minimap.h"
 #include <stdio.h>
 
-
 SDL_Window* InitFenetre(const char *titre, int largeur, int hauteur)
 {
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
@@ -23,7 +22,6 @@ SDL_Renderer* InitRenderer(SDL_Window *window)
     if (!r) fprintf(stderr, "SDL_CreateRenderer : %s\n", SDL_GetError());
     return r;
 }
-
 
 int LoadRessources(Minimap *m, SDL_Renderer *renderer,
                    const char *bgPath, const char *playerPath,
@@ -53,7 +51,6 @@ int LoadRessources(Minimap *m, SDL_Renderer *renderer,
     return 1;
 }
 
-
 SDL_Rect worldToMinimap(Minimap *m, SDL_Rect worldPos, float zoom)
 {
     float factor = (m->redimensionnement * zoom) / 100.0f;
@@ -66,12 +63,11 @@ SDL_Rect worldToMinimap(Minimap *m, SDL_Rect worldPos, float zoom)
     return result;
 }
 
-
 void renderBorder(SDL_Renderer *renderer, SDL_Rect minimapPos,
                   float borderTimer)
 {
     if (borderTimer > 0.0f)
-        SDL_SetRenderDrawColor(renderer, 220, 30,  30,  255);
+        SDL_SetRenderDrawColor(renderer, 220, 30, 30, 255);
     else
         SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
 
@@ -83,7 +79,6 @@ void renderBorder(SDL_Renderer *renderer, SDL_Rect minimapPos,
         SDL_RenderDrawRect(renderer, &border);
     }
 }
-
 
 void afficherMinimap(Minimap *m, SDL_Renderer *renderer,
                      GameState *state, Entite *entite)
@@ -114,9 +109,8 @@ void afficherMinimap(Minimap *m, SDL_Renderer *renderer,
         SDL_RenderFillRect(renderer, &state->posJoueur);
     }
 
-    if (m->background) {
+    if (m->background)
         SDL_RenderCopy(renderer, m->background, NULL, &m->minimapPosition);
-    }
 
     SDL_Rect playerMinimap = worldToMinimap(m, state->posJoueur, state->zoom);
     if (m->playerTexture)
@@ -126,16 +120,14 @@ void afficherMinimap(Minimap *m, SDL_Renderer *renderer,
         SDL_RenderFillRect(renderer, &playerMinimap);
     }
     m->playerPosition = playerMinimap;
-
 }
 
 int LoadEtincelle(Etincelle *e, SDL_Renderer *renderer,
-                  const char *path, int nbFrames,
-                  int rows)
+                  const char *path, int nbFrames, int rows)
 {
     SDL_Surface *surf = IMG_Load(path);
     if (!surf) {
-        fprintf(stderr, "LoadEtincelle – %s\n", IMG_GetError());
+        fprintf(stderr, "LoadEtincelle : %s\n", IMG_GetError());
         e->spriteSheet = NULL;
         return 0;
     }
@@ -144,12 +136,10 @@ int LoadEtincelle(Etincelle *e, SDL_Renderer *renderer,
     int frameW = surf->w / nbFrames;
     int frameH = surf->h;
     SDL_FreeSurface(surf);
-    e->nbFrames      = nbFrames;
-    e->rows          = rows;
-    e->direction     = 0;
-    e->active        = 0;
-    e->frameTimer    = 0.0f;
-    e->frameDuration = 0.1f;
+    e->nbFrames  = nbFrames;
+    e->rows      = rows;
+    e->direction = 0;
+    e->active    = 0;
     e->posSprite = (SDL_Rect){ 0, 0, frameW, frameH };
     e->destRect  = (SDL_Rect){ 0, 0, 20, 20 };
     return 1;
@@ -166,14 +156,12 @@ void declencherEtincelle(Etincelle *e, SDL_Rect posJoueurMinimap,
     e->destRect.y  = posJoueurMinimap.y - e->destRect.h / 2;
 }
 
-void updateEtincelle(Etincelle *e, float delta)
+void updateEtincelle(Etincelle *e)
 {
     if (!e->active) return;
-    e->frameTimer += delta;
-    if (e->frameTimer < e->frameDuration) return;
-    e->frameTimer -= e->frameDuration;
 
     e->posSprite.y = e->direction * e->posSprite.h;
+
     if (e->posSprite.x == e->largeurSprite - e->posSprite.w) {
         e->posSprite.x = 0;
         e->direction++;
@@ -189,8 +177,7 @@ void updateEtincelle(Etincelle *e, float delta)
 void afficherEtincelle(SDL_Renderer *renderer, Etincelle *e)
 {
     if (!e->active || !e->spriteSheet) return;
-    SDL_RenderCopy(renderer, e->spriteSheet,
-                   &e->posSprite, &e->destRect);
+    SDL_RenderCopy(renderer, e->spriteSheet, &e->posSprite, &e->destRect);
 }
 
 void libererEtincelle(Etincelle *e)
@@ -241,33 +228,33 @@ void UpdateGame(SDL_Rect *posJoueur, int gauche, int droite,
                           (absY * m->redimensionnement) / 100;
 }
 
-void initGameState(GameState *state, SDL_Rect posJoueur, float rotation,
-                   float zoom)
+void initGameState(GameState *state, SDL_Rect posJoueur,
+                   float rotation, float zoom)
 {
     state->posJoueur        = posJoueur;
     state->rotation         = rotation;
-    state->time             = 0;
     state->collisionBBEvent = 0;
     state->collisionPPEvent = 0;
     state->borderTimer      = 0.0f;
     state->zoom             = zoom;
-    state->gauche = 0;
-    state->droite = 0;
-    state->haut = 0;
-    state->bas = 0;
+    state->gauche           = 0;
+    state->droite           = 0;
+    state->haut             = 0;
+    state->bas              = 0;
 }
 
-void Lecture(Minimap *m, GameState *state) {
+void Lecture(Minimap *m, GameState *state)
+{
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         if (e.type == SDL_QUIT) m->running = 0;
         if (e.type == SDL_KEYDOWN) {
             switch (e.key.keysym.sym) {
-                case SDLK_ESCAPE: m->running = 0; break;
-                case SDLK_LEFT:   state->gauche = 1;     break;
-                case SDLK_RIGHT:  state->droite = 1;     break;
-                case SDLK_UP:     state->haut   = 1;     break;
-                case SDLK_DOWN:   state->bas    = 1;     break;
+                case SDLK_ESCAPE: m->running    = 0; break;
+                case SDLK_LEFT:   state->gauche = 1; break;
+                case SDLK_RIGHT:  state->droite = 1; break;
+                case SDLK_UP:     state->haut   = 1; break;
+                case SDLK_DOWN:   state->bas    = 1; break;
                 case SDLK_z:
                     state->zoom += ZOOM_STEP;
                     if (state->zoom > ZOOM_MAX) state->zoom = ZOOM_MAX;
@@ -288,34 +275,6 @@ void Lecture(Minimap *m, GameState *state) {
                 default: break;
             }
         }
-    }
-}
-
-void checkCollisionBB(SDL_Rect *posJoueur, SDL_Rect ancienne,
-                      Minimap *m, Entite *entite, GameState *state)
-{
-    int bb = collisionBB(*posJoueur, entite->pos);
-    state->collisionBBEvent = bb;
-    if (bb) {
-        *posJoueur = ancienne;
-        m->playerPosition.x = m->minimapPosition.x +
-                              (ancienne.x * m->redimensionnement) / 100;
-        m->playerPosition.y = m->minimapPosition.y +
-                              (ancienne.y * m->redimensionnement) / 100;
-    }
-}
-
-void checkCollisionPP(SDL_Rect *posJoueur, SDL_Rect ancienne,
-                      Minimap *m, SDL_Surface *maskSurf, GameState *state)
-{
-    int pp = collisionPP(maskSurf, *posJoueur);
-    state->collisionPPEvent = pp;
-    if (pp) {
-        *posJoueur = ancienne;
-        m->playerPosition.x = m->minimapPosition.x +
-                              (ancienne.x * m->redimensionnement) / 100;
-        m->playerPosition.y = m->minimapPosition.y +
-                              (ancienne.y * m->redimensionnement) / 100;
     }
 }
 
@@ -357,5 +316,3 @@ int collisionPP(SDL_Surface *maskSurf, SDL_Rect pos)
     }
     return 0;
 }
-
-

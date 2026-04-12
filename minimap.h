@@ -27,24 +27,19 @@ typedef struct {
     SDL_Rect     destRect;
     int          nbFrames;
     int          largeurSprite;
+    int          rows;
     int          direction;
     int          active;
-    int          rows;
-    float        frameTimer;
-    float        frameDuration;
 } Etincelle;
 
-
-
 typedef struct {
-    SDL_Rect    posJoueur;
-    float       rotation;
-    Uint32      time;
-    int         collisionBBEvent;
-    int         collisionPPEvent;
-    float       borderTimer;
-    float       zoom;
-    int         gauche, droite, haut, bas;
+    SDL_Rect posJoueur;
+    float    rotation;
+    int      collisionBBEvent;
+    int      collisionPPEvent;
+    float    borderTimer;
+    float    zoom;
+    int      gauche, droite, haut, bas;
 } GameState;
 
 typedef struct {
@@ -60,43 +55,35 @@ typedef struct {
 SDL_Window*   InitFenetre  (const char *titre, int largeur, int hauteur);
 SDL_Renderer* InitRenderer (SDL_Window *window);
 
-int  LoadRessources  (Minimap *m, SDL_Renderer *renderer,
-                      const char *bgPath, const char *playerPath,
-                      int mapX, int mapY, int mapW, int mapH,
-                      int pointW, int pointH, int redim);
-
-void afficherMinimap   (Minimap *m, SDL_Renderer *renderer,
-                        GameState *state, Entite *entite);
-void renderBorder      (SDL_Renderer *renderer, SDL_Rect minimapPos,
-                        float borderTimer);
-SDL_Rect  worldToMinimap(Minimap *m, SDL_Rect worldPos, float zoom);
+int      LoadRessources  (Minimap *m, SDL_Renderer *renderer,
+                          const char *bgPath, const char *playerPath,
+                          int mapX, int mapY, int mapW, int mapH,
+                          int pointW, int pointH, int redim);
+SDL_Rect worldToMinimap  (Minimap *m, SDL_Rect worldPos, float zoom);
+void     renderBorder    (SDL_Renderer *renderer, SDL_Rect minimapPos,
+                          float borderTimer);
+void     afficherMinimap (Minimap *m, SDL_Renderer *renderer,
+                          GameState *state, Entite *entite);
 
 int  LoadEtincelle       (Etincelle *e, SDL_Renderer *renderer,
-                          const char *path, int nbFrames,
-                          int rows);
+                          const char *path, int nbFrames, int rows);
 void declencherEtincelle (Etincelle *e, SDL_Rect posJoueurMinimap,
                           int direction);
-void updateEtincelle     (Etincelle *e, float delta);
+void updateEtincelle     (Etincelle *e);
 void afficherEtincelle   (SDL_Renderer *renderer, Etincelle *e);
 void libererEtincelle    (Etincelle *e);
 
-void checkCollisionBB (SDL_Rect *posJoueur, SDL_Rect ancienne,
-                       Minimap *m, Entite *entite, GameState *state);
-void checkCollisionPP (SDL_Rect *posJoueur, SDL_Rect ancienne,
-                       Minimap *m, SDL_Surface *maskSurf, GameState *state);
-SDL_Color GetPixel    (SDL_Surface *surface, int x, int y);
-int       collisionBB (SDL_Rect pos1, SDL_Rect pos2);
-int       collisionPP (SDL_Surface *maskSurf, SDL_Rect pos);
+SDL_Color GetPixel        (SDL_Surface *surface, int x, int y);
+int       collisionBB     (SDL_Rect pos1, SDL_Rect pos2);
+int       collisionPP     (SDL_Surface *maskSurf, SDL_Rect pos);
 
-
-void UpdateGame  (SDL_Rect *posJoueur, int gauche, int droite,
-                  int haut, int bas, float *rotation, Minimap *m);
+void UpdateGame   (SDL_Rect *posJoueur, int gauche, int droite,
+                   int haut, int bas, float *rotation, Minimap *m);
 void initGameState(GameState *state, SDL_Rect posJoueur, float rotation,
                    float zoom);
-void Lecture(Minimap *m, GameState *state);
-
+void Lecture      (Minimap *m, GameState *state);
 
 void liberer (Etincelle *etincelle, Entite *entite,
               SDL_Surface *maskSurf, Minimap *m);
-#endif
 
+#endif

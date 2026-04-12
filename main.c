@@ -26,55 +26,52 @@ int main(int argc, char *argv[])
     LoadEtincelle(&etincelle, renderer, "assets/anim.png", 5, 2);
 
     GameState state;
-    initGameState(&state, (SDL_Rect){ 100, 100, 50, 60 }, 0.0f,
-                  1.0f);
-
-    Uint32 lastTick = SDL_GetTicks();
+    initGameState(&state, (SDL_Rect){ 100, 100, 50, 60 }, 0.0f, 1.0f);
 
     while (m.running) {
 
-        Uint32 now   = SDL_GetTicks();
-        float  delta = (now - lastTick) / 1000.0f;
-        lastTick     = now;
 
         afficherMinimap(&m, renderer, &state, &entite);
         afficherEtincelle(renderer, &etincelle);
         renderBorder(renderer, m.minimapPosition, state.borderTimer);
         SDL_RenderPresent(renderer);
 
+
         Lecture(&m, &state);
+
 
         SDL_Rect new_pos = state.posJoueur;
         UpdateGame(&new_pos, state.gauche, state.droite, state.haut, state.bas,
                    &state.rotation, &m);
 
+
         int bb = collisionBB(new_pos, entite.pos);
         int pp = collisionPP(maskSurf, new_pos);
+
         if (!bb && !pp) {
-            state.posJoueur = new_pos;
-            m.playerPosition.x = m.minimapPosition.x + (new_pos.x * m.redimensionnement) / 100;
-            m.playerPosition.y = m.minimapPosition.y + (new_pos.y * m.redimensionnement) / 100;
+            state.posJoueur    = new_pos;
+            m.playerPosition.x = m.minimapPosition.x +
+                                 (new_pos.x * m.redimensionnement) / 100;
+            m.playerPosition.y = m.minimapPosition.y +
+                                 (new_pos.y * m.redimensionnement) / 100;
         } else {
             state.collisionBBEvent = bb;
             state.collisionPPEvent = pp;
-            state.borderTimer = 0.5f;
+            state.borderTimer      = 30;
             declencherEtincelle(&etincelle, m.playerPosition, 0);
         }
 
-        state.time = now;
 
-        if (state.borderTimer > 0.0f) {
-            state.borderTimer -= delta;
-            if (state.borderTimer < 0.0f) state.borderTimer = 0.0f;
-        }
+        if (state.borderTimer > 0)
+            state.borderTimer--;
 
-        updateEtincelle(&etincelle, delta);
 
+        updateEtincelle(&etincelle);
     }
 
     liberer(&etincelle, &entite, maskSurf, &m);
-    if (renderer) SDL_DestroyRenderer(renderer);
-    if (window)   SDL_DestroyWindow(window);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
     IMG_Quit();
     SDL_Quit();
     return 0;
