@@ -1,84 +1,65 @@
-#ifndef HEADER_H
-#define HEADER_H
+#ifndef GAME_HEADER_H
+#define GAME_HEADER_H
 
 #include <SDL2/SDL.h>
-#include <SDL2/SDL_image.h>
-#include <SDL2/SDL_mixer.h>
 #include <SDL2/SDL_ttf.h>
+#include <SDL2/SDL_image.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 
-#define WIDTH  1280
-#define HEIGHT  720
+#define SCREEN_WIDTH     1400
+#define SCREEN_HEIGHT    720
+#define LEVEL_WIDTH      2000
+#define LEVEL_HEIGHT     562
+#define CAM_SPEED        0.12f
+#define VITESSE          5
 
-/* ── States ── */
-typedef enum {
-    STATE_MENU,
-    STATE_GAME,
-    STATE_OPTIONS,
-    STATE_SCORES,       /* leaderboard screen from project 2 */
-    STATE_CREDITS,
-    STATE_QUIT
-} GameState;
+#define PLATFORM_FIXED        0
+#define PLATFORM_MOVING       1
+#define PLATFORM_DESTRUCTIBLE 2
 
-/* ── Button (project 1 style: normal + hover textures) ── */
+#define STATE_MENU       0
+#define STATE_NAME_INPUT 1
+#define STATE_GAME       2
+
+typedef struct { SDL_Rect rect; int type; int active; } Platform;
+
 typedef struct {
-    SDL_Rect      rect;
-    int           selected;
-    SDL_Texture  *normalTex;
-    SDL_Texture  *hoverTex;
-} Button;
+    SDL_Rect     rect;
+    int          lives, score, enigmasSolved;
+    SDL_Texture *sprite;
+    char         name[64];
+} Player;
 
-/* ── Master Game struct ── */
 typedef struct {
-    /* --- shared / project-1 menu assets --- */
-    SDL_Texture  *background;
-    TTF_Font     *font;
-    SDL_Texture  *titleTexture;
-    SDL_Rect      titleRect;
-    SDL_Texture  *logoTexture;
-    SDL_Rect      logoRect;
-    SDL_Texture  *trapTexture;
-    SDL_Rect      trapRect;
-    Mix_Music    *music;
-    Mix_Chunk    *Sound;          /* hover sound */
-    Button        buttons[5];    /* Play / Options / Scores / Credits / Quit */
+    SDL_Texture *image;
+    SDL_Rect     camera1, camera2, posEcran1, posEcran2;
+    int          direction;
+    float        camX1, camX2;
+} Background;
 
-    /* --- project-2 leaderboard assets --- */
-    SDL_Texture  *msGreTex;      /* "Scores" button highlighted */
-    SDL_Texture  *msRedTex;      /* "Scores" button normal      */
-    SDL_Texture  *leaderTex;     /* leaderboard background      */
-    Mix_Chunk    *click;         /* click sound                 */
-    Button        backBtn;       /* back button on leaderboard  */
-
-    /* --- game state assets --- */
-    Button        gameButtons[5]; /* j1, o1, s1, c1, h1 - all lead to scores */
-
-    /* --- search box (project 2) --- */
-    SDL_Rect      searchBox;
-    int           inputActive;
-    char          inputText[64];
-
-    /* --- state machine --- */
-    GameState     currentState;
-    int           running;
+typedef struct {
+    SDL_Window   *window;
+    SDL_Renderer *renderer;
+    TTF_Font     *font, *fontLarge;
+    Background    background;
+    Platform     *platforms;
+    int           platformCount;
+    Player        player1, player2;
+    Uint32        startTime;
+    int           splitScreen, showGuide, inputTarget, inputLen;
+    int           state, running;
+    char          inputBuffer[64];
+    SDL_Texture  *nameBg;
+    SDL_Rect      guideBtnClose;
 } Game;
 
-/* ── Function prototypes ── */
-/* Asset helpers */
-SDL_Texture* ChargerTexture(SDL_Renderer *renderer, const char *fichier);
-Mix_Music*   ChargerMusique(const char *fichier);
-Mix_Chunk*   ChargerSon    (const char *fichier);
+int  InitGame(Game *g, const char *title, int w, int h);
+int  LoadRessources(Game *g, const char *bgPath, const char *nameBgPath);
+void HandleEvents(Game *g, int keys[]);
+void Update(Game *g, int keys[]);
+void Render(Game *g, int keys[]);
+void Cleanup(Game *g);
 
-/* Lifecycle */
-int  Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer);
-void Liberation    (Game *game, SDL_Window  *window, SDL_Renderer  *renderer);
-
-/* Per-state input + render */
-void Menu_LectureEntree       (Game *game);
-void Menu_Affichage           (Game *game, SDL_Renderer *renderer);
-void Leaderboard_LectureEntree(Game *game);
-void Leaderboard_Affichage    (Game *game, SDL_Renderer *renderer);
-void Jeu_LectureEntree        (Game *game);
-void Jeu_Affichage            (Game *game, SDL_Renderer *renderer);
-void HandleGameButtonClick    (Game *game);
-
-#endif /* HEADER_H */
+#endif
