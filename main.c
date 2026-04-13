@@ -3,16 +3,19 @@
 
 int main(int argc, char *argv[])
 {
-    SDL_Window   *window   = InitFenetre("Minimap", WIDTH, HEIGHT);
-    if (!window) return 1;
-    SDL_Renderer *renderer = InitRenderer(window);
-    if (!renderer) { SDL_DestroyWindow(window); return 1; }
+    SDL_Window   *window   = NULL;
+    SDL_Renderer *renderer = NULL;
+    if (!InitSDL(&window, &renderer, "Minimap", WIDTH, HEIGHT))
+        return 1;
 
     Minimap m;
-    if (!LoadRessources(&m, renderer,
+    GameState state;
+    if (!LoadRessources(&m, &state, renderer,
                         "assets/background.png", "assets/mario.png",
-                        WIDTH-180, 0, 180, 120, 16, 16, 20)) {
-        printf("Erreur LoadRessources\n"); return 1;
+                        WIDTH-180, 0, 180, 120, 16, 16, 20,
+                        (SDL_Rect){ 100, 100, 50, 60 }, 0.0f, 1.0f)) {
+        printf("Erreur LoadRessources\n");
+        return 1;
     }
 
     SDL_Surface *maskSurf = SDL_LoadBMP("assets/backgroundmasq.bmp");
@@ -25,25 +28,17 @@ int main(int argc, char *argv[])
     Etincelle etincelle;
     LoadEtincelle(&etincelle, renderer, "assets/anim.png", 5, 2);
 
-    GameState state;
-    initGameState(&state, (SDL_Rect){ 100, 100, 50, 60 }, 0.0f, 1.0f);
-
     while (m.running) {
-
-
         afficherMinimap(&m, renderer, &state, &entite);
         afficherEtincelle(renderer, &etincelle);
         renderBorder(renderer, m.minimapPosition, state.borderTimer);
         SDL_RenderPresent(renderer);
 
-
         Lecture(&m, &state);
-
 
         SDL_Rect new_pos = state.posJoueur;
         UpdateGame(&new_pos, state.gauche, state.droite, state.haut, state.bas,
                    &state.rotation, &m);
-
 
         int bb = collisionBB(new_pos, entite.pos);
         int pp = collisionPP(maskSurf, new_pos);
@@ -61,15 +56,13 @@ int main(int argc, char *argv[])
             declencherEtincelle(&etincelle, m.playerPosition, 0);
         }
 
-
         if (state.borderTimer > 0)
             state.borderTimer--;
-
 
         updateEtincelle(&etincelle);
     }
 
-    liberer(&etincelle, &entite, maskSurf, &m);
+    Liberation(&etincelle, &entite, maskSurf, &m);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     IMG_Quit();

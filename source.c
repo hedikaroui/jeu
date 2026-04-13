@@ -1,32 +1,34 @@
 #include "minimap.h"
 #include <stdio.h>
 
-SDL_Window* InitFenetre(const char *titre, int largeur, int hauteur)
+int InitSDL(SDL_Window **window, SDL_Renderer **renderer,
+            const char *titre, int largeur, int hauteur)
 {
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         fprintf(stderr, "SDL_Init : %s\n", SDL_GetError());
-        return NULL;
+        return 0;
     }
-    SDL_Window *w = SDL_CreateWindow(titre,
-                        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                        largeur, hauteur, 0);
-    if (!w) fprintf(stderr, "SDL_CreateWindow : %s\n", SDL_GetError());
-    return w;
+    *window = SDL_CreateWindow(titre,
+                  SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                  largeur, hauteur, 0);
+    if (!*window) {
+        fprintf(stderr, "SDL_CreateWindow : %s\n", SDL_GetError());
+        return 0;
+    }
+    *renderer = SDL_CreateRenderer(*window, -1,
+                    SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    if (!*renderer) {
+        fprintf(stderr, "SDL_CreateRenderer : %s\n", SDL_GetError());
+        return 0;
+    }
+    return 1;
 }
 
-SDL_Renderer* InitRenderer(SDL_Window *window)
-{
-    SDL_Renderer *r = SDL_CreateRenderer(window, -1,
-                          SDL_RENDERER_ACCELERATED |
-                          SDL_RENDERER_PRESENTVSYNC);
-    if (!r) fprintf(stderr, "SDL_CreateRenderer : %s\n", SDL_GetError());
-    return r;
-}
-
-int LoadRessources(Minimap *m, SDL_Renderer *renderer,
+int LoadRessources(Minimap *m, GameState *state, SDL_Renderer *renderer,
                    const char *bgPath, const char *playerPath,
                    int mapX, int mapY, int mapW, int mapH,
-                   int pointW, int pointH, int redim)
+                   int pointW, int pointH, int redim,
+                   SDL_Rect posJoueur, float rotation, float zoom)
 {
     if (!(IMG_Init(IMG_INIT_PNG | IMG_INIT_JPG) &
           (IMG_INIT_PNG | IMG_INIT_JPG))) {
@@ -48,6 +50,17 @@ int LoadRessources(Minimap *m, SDL_Renderer *renderer,
     m->redimensionnement = redim;
     m->camera.rect       = (SDL_Rect){ 0, 0, WIDTH, HEIGHT };
     m->running           = 1;
+
+    state->posJoueur        = posJoueur;
+    state->rotation         = rotation;
+    state->zoom             = zoom;
+    state->collisionBBEvent = 0;
+    state->collisionPPEvent = 0;
+    state->borderTimer      = 0.0f;
+    state->gauche           = 0;
+    state->droite           = 0;
+    state->haut             = 0;
+    state->bas              = 0;
     return 1;
 }
 
@@ -180,18 +193,13 @@ void afficherEtincelle(SDL_Renderer *renderer, Etincelle *e)
     SDL_RenderCopy(renderer, e->spriteSheet, &e->posSprite, &e->destRect);
 }
 
-void libererEtincelle(Etincelle *e)
+void Liberation(Etincelle *etincelle, Entite *entite,
+                SDL_Surface *maskSurf, Minimap *m)
 {
-    if (e->spriteSheet) {
-        SDL_DestroyTexture(e->spriteSheet);
-        e->spriteSheet = NULL;
+    if (etincelle && etincelle->spriteSheet) {
+        SDL_DestroyTexture(etincelle->spriteSheet);
+        etincelle->spriteSheet = NULL;
     }
-}
-
-void liberer(Etincelle *etincelle, Entite *entite,
-             SDL_Surface *maskSurf, Minimap *m)
-{
-    libererEtincelle(etincelle);
     if (entite && entite->texture) {
         SDL_DestroyTexture(entite->texture);
         entite->texture = NULL;
@@ -226,21 +234,6 @@ void UpdateGame(SDL_Rect *posJoueur, int gauche, int droite,
                           (absX * m->redimensionnement) / 100;
     m->playerPosition.y = m->minimapPosition.y +
                           (absY * m->redimensionnement) / 100;
-}
-
-void initGameState(GameState *state, SDL_Rect posJoueur,
-                   float rotation, float zoom)
-{
-    state->posJoueur        = posJoueur;
-    state->rotation         = rotation;
-    state->collisionBBEvent = 0;
-    state->collisionPPEvent = 0;
-    state->borderTimer      = 0.0f;
-    state->zoom             = zoom;
-    state->gauche           = 0;
-    state->droite           = 0;
-    state->haut             = 0;
-    state->bas              = 0;
 }
 
 void Lecture(Minimap *m, GameState *state)
