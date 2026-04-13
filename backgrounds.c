@@ -1,4 +1,4 @@
-#include "backgrounds.h"
+#include "assets_catalog.h"
 
 const char *BG_MENU = "backgrounds/background.png";
 const char *BG_SAVE_PRIMARY = "backgrounds/BG.png";

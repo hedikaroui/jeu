@@ -4,7 +4,16 @@ CC      = gcc
 TARGET  = jeu
 
 SRCS    = main.c \
-          game_states.c \
+          game_loop.c \
+          game_core.c \
+          player_select_state.c \
+          start_play_state.c \
+          games_state.c \
+          menu.c \
+          leaderboard.c \
+          save.c \
+          options.c \
+          animation.c \
           songs.c \
           characters.c \
           backgrounds.c \
@@ -39,8 +48,8 @@ $(TARGET): $(OBJS)
 main.o: main.c game.h
 	$(CC) $(CFLAGS) -c main.c -o main.o
 
-game_states.o: game_states.c game.h
-	$(CC) $(CFLAGS) -c game_states.c -o game_states.o
+game_core.o: game_core.c game.h
+	$(CC) $(CFLAGS) -c game_core.c -o game_core.o
 
 # ───────────────────────────────────────────────
 # Nettoyage
@@ -50,8 +59,4 @@ clean:
 
 re: clean all
 
-.PHONY: all clean re menu
-
-menu:
-	@echo "Building SDL menu example"
-	$(MAKE) -C menuSDL
+.PHONY: all clean re

@@ -1,4 +1,4 @@
-#include "songs.h"
+#include "assets_catalog.h"
 
 const char *SONG_MENU_MUSIC = "songs/jingle.mp3";
 const char *SONG_SAVE_MUSIC_PRIMARY = "songs/save_music.mp3";

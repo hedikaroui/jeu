@@ -1,4 +1,4 @@
-#include "fonts.h"
+#include "assets_catalog.h"
 
 const char *FONT_SYSTEM_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
 const char *FONT_SYSTEM_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";

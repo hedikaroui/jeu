@@ -1,4 +1,4 @@
-#include "buttons.h"
+#include "assets_catalog.h"
 
 const char *MENU_BUTTON_NORMAL[5] = {"buttons/j1.png", "buttons/o1.png", "buttons/q1.png", "buttons/m1.png", "buttons/h1.png"};
 const char *MENU_BUTTON_HOVER[5]  = {"buttons/j2.png", "buttons/o2.png", "buttons/q2.png", "buttons/m2.png", "buttons/h2.png"};

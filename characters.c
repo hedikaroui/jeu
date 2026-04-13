@@ -1,4 +1,4 @@
-#include "characters.h"
+#include "assets_catalog.h"
 
 const char *CHAR_LOGO = "characters/logo.png";
 const char *CHAR_PLAYER_1 = "characters/first_player.png";
