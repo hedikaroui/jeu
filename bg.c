@@ -285,9 +285,17 @@ void HandleNameInput(Game *g, SDL_Event *e) {
         if (k == SDLK_RETURN && g->inputLen > 0) {
             if (g->inputTarget == 1) {
                 strncpy(g->player1.name, g->inputBuffer, 63);
-                g->inputTarget = 2; g->inputLen = 0; memset(g->inputBuffer, 0, 64);
+                g->player1.name[63] = '\0';
+                if (g->splitScreen) {
+                    g->inputTarget = 2;
+                    g->inputLen = 0;
+                    memset(g->inputBuffer, 0, 64);
+                } else {
+                    g->state = STATE_GAME;
+                }
             } else {
                 strncpy(g->player2.name, g->inputBuffer, 63);
+                g->player2.name[63] = '\0';
                 g->state = STATE_GAME;
             }
         } else if (k == SDLK_BACKSPACE && g->inputLen > 0) {
@@ -344,4 +352,3 @@ void UpdatePlayersSplit(Game *g, int keys[], int lw, int lh) {
     g->background.posEcran1 = (SDL_Rect){0,    0, half, SCREEN_HEIGHT};
     g->background.posEcran2 = (SDL_Rect){half, 0, half, SCREEN_HEIGHT};
 }
-

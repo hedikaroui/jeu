@@ -1,0 +1,119 @@
+Q:Quel objet Kevin met-il sur la poignee pour bruler Harry ?
+A:Bouilloire
+B:Fer a repasser
+C:Radiateur
+R:B
+
+Q:Dans quel film apparait Kevin McCallister ?
+A:Maman j'ai rate l'avion
+B:Gremlins
+C:Hook
+R:A
+
+Q:Quel acteur joue Kevin dans Maman j'ai rate l'avion ?
+A:Macaulay Culkin
+B:Haley Joel Osment
+C:Jake Lloyd
+R:A
+
+Q:Comment s'appelle le duo de cambrioleurs dans le film ?
+A:Les Bandits du Sud
+B:Les Bandits Mouilles
+C:Les Fantomes
+R:B
+
+Q:Dans quelle ville se deroule l'action du premier film ?
+A:New York
+B:Chicago
+C:Los Angeles
+R:B
+
+Q:Combien de freres et soeurs a Kevin dans le premier film ?
+A:2
+B:4
+C:6
+R:B
+
+Q:Quel piege Kevin pose-t-il sur le sol du sous-sol ?
+A:De l'huile
+B:Des clous
+C:Du verre brise
+R:A
+
+Q:Dans quel pays la famille de Kevin devait partir en vacances ?
+A:France
+B:Mexique
+C:Italie
+R:A
+
+Q:Quel voisin aide Kevin a la fin du premier film ?
+A:Le facteur
+B:Le vieux Marley
+C:Le policier
+R:B
+
+Q:Quel est le prenom de la mere de Kevin ?
+A:Kate
+B:Julie
+C:Susan
+R:A
+
+Q:Combien de fois Kevin crie-t-il en se mettant de l'apres-rasage ?
+A:1
+B:2
+C:3
+R:B
+
+Q:Quel est le nom de famille de Kevin ?
+A:Miller
+B:McCallister
+C:Johnson
+R:B
+
+Q:Ou la famille de Kevin part-elle en vacances dans le 2eme film ?
+A:Paris
+B:Miami
+C:New York
+R:C
+
+Q:Quel acteur joue le cambrioleur Harry ?
+A:Joe Pesci
+B:Daniel Stern
+C:John Candy
+R:A
+
+Q:Quel acteur joue le cambrioleur Marv ?
+A:Joe Pesci
+B:Daniel Stern
+C:Rob Schneider
+R:B
+
+Q:Quel est le surnom donne aux deux cambrioleurs ?
+A:Les Bandits de Noel
+B:Les Bandits Mouilles
+C:Les Voleurs du Soir
+R:B
+
+Q:Comment Kevin commande-t-il sa pizza au debut du film ?
+A:Par courrier
+B:Par telephone
+C:En personne
+R:B
+
+Q:Quel film Kevin regarde-t-il seul a la maison ?
+A:Freddy
+B:Angels with Filthy Souls
+C:Halloween
+R:B
+
+Q:Quelle est la reaction de Kevin quand il se retrouve seul ?
+A:Il pleure
+B:Il appelle la police
+C:Il crie de joie
+R:C
+
+Q:Quel instrument joue le voisin Marley dans le film ?
+A:Violon
+B:Piano
+C:Guitare
+R:A

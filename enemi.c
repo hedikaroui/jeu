@@ -5,20 +5,35 @@
 #include <SDL2/SDL_ttf.h>
 #include <SDL2/SDL_mixer.h>
 #include <stdlib.h>
+#include <string.h>
 
 // 
 void initEnemy(SDL_Renderer *renderer,Enemy *enemy,const char *normalPath,int normalCols,int normalRows,const char *hurtPath,int hurtCols,int hurtRows){
+    memset(enemy, 0, sizeof(*enemy));
     SDL_Surface *surface = IMG_Load(normalPath);
+    if (!surface) {
+        fprintf(stderr, "IMG_Load %s failed: %s\n", normalPath, IMG_GetError());
+        return;
+    }
     enemy->textureNormal = SDL_CreateTextureFromSurface(renderer, surface);
     SDL_FreeSurface(surface);
+
+    if (!enemy->textureNormal) {
+        fprintf(stderr, "SDL_CreateTextureFromSurface %s failed: %s\n", normalPath, SDL_GetError());
+        return;
+    }
 
     SDL_QueryTexture(enemy->textureNormal, NULL, NULL, &enemy->frameWidth, &enemy->frameHeight);
     enemy->frameWidth  /= normalCols;
     enemy->frameHeight /= normalRows;
 
     surface = IMG_Load(hurtPath);
-    enemy->textureHurt = SDL_CreateTextureFromSurface(renderer, surface);
-    SDL_FreeSurface(surface);
+    if (surface) {
+        enemy->textureHurt = SDL_CreateTextureFromSurface(renderer, surface);
+        SDL_FreeSurface(surface);
+    } else {
+        fprintf(stderr, "IMG_Load %s failed: %s\n", hurtPath, IMG_GetError());
+    }
 
     enemy->position.x = 300;
     enemy->position.y = 260;
@@ -47,10 +62,21 @@ void renderEnemy(SDL_Renderer *renderer, Enemy *enemy, SDL_Rect *cam) {
         dst.y -= cam->y;
     }
 
+    if (!enemy->textureNormal) {
+        SDL_SetRenderDrawColor(renderer, 220, 70, 70, 255);
+        SDL_RenderFillRect(renderer, &dst);
+        return;
+    }
+
     if (enemy->state.hurt) {
-        SDL_SetTextureColorMod(enemy->textureHurt, 255, 0, 0);
-        SDL_SetTextureAlphaMod(enemy->textureHurt, 180);
-        SDL_RenderCopy(renderer, enemy->textureHurt, &enemy->posSprite, &dst);
+        if (enemy->textureHurt) {
+            SDL_SetTextureColorMod(enemy->textureHurt, 255, 0, 0);
+            SDL_SetTextureAlphaMod(enemy->textureHurt, 180);
+            SDL_RenderCopy(renderer, enemy->textureHurt, &enemy->posSprite, &dst);
+        } else {
+            SDL_SetRenderDrawColor(renderer, 255, 0, 0, 180);
+            SDL_RenderFillRect(renderer, &dst);
+        }
     } else if (enemy->state.playerTouch) {
         SDL_SetTextureColorMod(enemy->textureNormal, 255, 0, 0);
         SDL_SetTextureAlphaMod(enemy->textureNormal, 180);
@@ -212,9 +238,13 @@ void scrollBackground(SDL_Renderer *renderer, Enemy *enemy, Obstacle *obs) {
 // ================= HUD =================
 
 void initHUD(HUD *hud, SDL_Renderer *renderer, const char *treePath) {
+    memset(hud, 0, sizeof(*hud));
     hud->trees = 7; // départ avec 7 sapins
     SDL_Surface *surface = IMG_Load(treePath);
-    if (!surface) return;
+    if (!surface) {
+        fprintf(stderr, "IMG_Load %s failed: %s\n", treePath, IMG_GetError());
+        return;
+    }
     hud->treeTexture = SDL_CreateTextureFromSurface(renderer, surface);
     SDL_FreeSurface(surface);
 }
@@ -222,7 +252,12 @@ void initHUD(HUD *hud, SDL_Renderer *renderer, const char *treePath) {
 void renderHUD(SDL_Renderer *renderer, HUD *hud) {
     for (int i = 0; i < hud->trees; i++) {
         SDL_Rect dst = {10 + i*80, 10, 80, 80};
-        SDL_RenderCopy(renderer, hud->treeTexture, NULL, &dst);
+        if (hud->treeTexture)
+            SDL_RenderCopy(renderer, hud->treeTexture, NULL, &dst);
+        else {
+            SDL_SetRenderDrawColor(renderer, 40, 170, 80, 255);
+            SDL_RenderFillRect(renderer, &dst);
+        }
     }
 }
 
@@ -320,11 +355,27 @@ void checkSnowballEnemyCollision(Snowball snowballs[], int *snowballCount, Enemy
 
 // ================= PLAYER =================
 void initPlayer(SDL_Renderer *renderer, EPlayer *player, const char *spritePath, int nbCols, int nbRows, Enemy *enemy) {
-    player->texture = NULL;
+    memset(player, 0, sizeof(*player));
     SDL_Surface *surface = IMG_Load(spritePath);
-    if (!surface) return;
+    if (!surface) {
+        fprintf(stderr, "IMG_Load %s failed: %s\n", spritePath, IMG_GetError());
+        player->position = (SDL_Rect){0, enemy ? enemy->position.y : 0, 48, 64};
+        player->maxFrames = 1;
+        player->frameWidth = player->position.w;
+        player->frameHeight = player->position.h;
+        return;
+    }
     player->texture = SDL_CreateTextureFromSurface(renderer, surface);
     SDL_FreeSurface(surface);
+
+    if (!player->texture) {
+        fprintf(stderr, "SDL_CreateTextureFromSurface %s failed: %s\n", spritePath, SDL_GetError());
+        player->position = (SDL_Rect){0, enemy ? enemy->position.y : 0, 48, 64};
+        player->maxFrames = 1;
+        player->frameWidth = player->position.w;
+        player->frameHeight = player->position.h;
+        return;
+    }
 
     int imgW, imgH;
     SDL_QueryTexture(player->texture, NULL, NULL, &imgW, &imgH);
@@ -350,12 +401,12 @@ void initPlayer(SDL_Renderer *renderer, EPlayer *player, const char *spritePath,
 void handlePlayerMovement(SDL_Event *event, EPlayer *player) {
     if (event->type == SDL_KEYDOWN) {
         switch (event->key.keysym.sym) {
-            case SDLK_RIGHT:
+            case SDLK_l:
                 player->isRunning = 1;       // commence à courir
                 player->speed = 3;           // vitesse
                 player->direction = 0;       // ligne droite du spritesheet
                 break;
-            case SDLK_LEFT:
+            case SDLK_j:
                 player->isRunning = 1;       // recule
                 player->speed = -3;          // vitesse négative
                 player->direction = 1;       // ligne gauche du spritesheet
@@ -364,8 +415,8 @@ void handlePlayerMovement(SDL_Event *event, EPlayer *player) {
     }
     else if (event->type == SDL_KEYUP) {
         switch (event->key.keysym.sym) {
-            case SDLK_RIGHT:
-            case SDLK_LEFT:
+            case SDLK_l:
+            case SDLK_j:
                 player->isRunning = 0;       // 🔥 s’arrête quand on relâche
                 player->speed = 0;
                 break;
@@ -376,7 +427,8 @@ void handlePlayerMovement(SDL_Event *event, EPlayer *player) {
 // ================= PLAYER UPDATE =================
 void updatePlayer(EPlayer *player, Enemy *enemy) {
     if (player->isRunning) {
-        player->frame = (player->frame + 1) % player->maxFrames;
+        if (player->maxFrames > 0)
+            player->frame = (player->frame + 1) % player->maxFrames;
         player->position.x += player->speed;
     }
 
@@ -393,7 +445,12 @@ void updatePlayer(EPlayer *player, Enemy *enemy) {
 }
 // ================= PLAYER RENDER =================
 void renderPlayer(SDL_Renderer *renderer, EPlayer *player) {
-    if (!player || !player->texture) return;
+    if (!player) return;
+    if (!player->texture) {
+        SDL_SetRenderDrawColor(renderer, 255, 230, 80, 255);
+        SDL_RenderFillRect(renderer, &player->position);
+        return;
+    }
     SDL_Rect src = {
         player->frame * player->frameWidth,          // colonne (animation)
         player->direction * player->frameHeight,     // ligne (0 = droite, 1 = gauche)
@@ -433,4 +490,3 @@ void destroyAll(Enemy *enemy, Obstacle *spider, Obstacle *falling,
     // Fermeture audio
     Mix_CloseAudio();
 }
-

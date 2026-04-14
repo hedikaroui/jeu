@@ -1,17 +1,19 @@
 #include "bg.h"
 #include "minimap.h"
 #include "enemi.h"
+#include "enigme22.h"
 #include <SDL2/SDL_mixer.h>
+#include <stdlib.h>
+#include <time.h>
 
 int main(int argc, char *argv[])
 {
     (void)argc; (void)argv;
 
-    
-
     Game g;
     memset(&g, 0, sizeof(Game));
     g.state = STATE_MENU;
+    srand((unsigned int)time(NULL));
 
     if (!InitSDL(&g, "Mon Jeu SDL2", SCREEN_WIDTH, SCREEN_HEIGHT))
         return 1;
@@ -41,6 +43,11 @@ int main(int argc, char *argv[])
     Etincelle etincelle;
     LoadEtincelle(&etincelle, g.renderer, "assets/anim.png", 5, 2);
 
+    /* Enigme popup state */
+    enigme22 enigme;
+    int enigmeOpen = 0;
+    Uint32 nextEnigmeTick = 0;
+
 
     Enemy enemy;
     Obstacle spider;
@@ -56,8 +63,13 @@ int main(int argc, char *argv[])
     backgroundMusic = Mix_LoadMUS("jingle.mp3");
     if (backgroundMusic) {
         Mix_PlayMusic(backgroundMusic, -1);
+    } else {
+        fprintf(stderr, "Mix_LoadMUS jingle.mp3 failed: %s\n", Mix_GetError());
     }
     collisionSound = Mix_LoadWAV("sound.wav");
+    if (!collisionSound) {
+        fprintf(stderr, "Mix_LoadWAV sound.wav failed: %s\n", Mix_GetError());
+    }
 
     initEnemy(g.renderer, &enemy, "enemy.png", 5, 5, "enemy2.png", 5, 2);
     initObstacle(g.renderer, &spider, "spider.png", 600, 300);
@@ -107,6 +119,10 @@ int main(int argc, char *argv[])
             renderSnowballs(g.renderer, snowballs, snowballCount);
             renderHUD(g.renderer, &hud);
             renderPlayer(g.renderer, &player);
+            if (enigmeOpen) {
+                E22_Affichage(&enigme, g.renderer);
+                E22_MiseAJour(&enigme);
+            }
             SDL_RenderPresent(g.renderer);
         }
 
@@ -119,38 +135,66 @@ int main(int argc, char *argv[])
             } else if (g.state == STATE_NAME_INPUT) {
                 HandleNameInput(&g, &e);
             } else if (g.state == STATE_GAME) {
-                if (e.type == SDL_MOUSEBUTTONDOWN)
-                    HandleGuideClick(&g, e.button.x, e.button.y);
-                handlePlayerMovement(&e, &player);
-                handleSnowballThrow(&e, &player, snowballs, &snowballCount);
-                if (e.type == SDL_KEYDOWN) {
-                    SDL_Scancode sc = e.key.keysym.scancode;
-                    if (sc == SDL_SCANCODE_H || sc == SDL_SCANCODE_F1)
-                        g.showGuide = !g.showGuide;
-                    else if (sc == SDL_SCANCODE_ESCAPE) {
-                        if (g.showGuide) g.showGuide = 0;
-                        else { memset(keys, 0, sizeof(keys)); g.state = STATE_MENU; }
-                    } else
-                        keys[sc] = 1;
-                    if (g.splitScreen) printf("DEBUG KEYDOWN sc=%d(%s) keys[%d]=%d\n", sc, SDL_GetScancodeName(sc), sc, keys[sc]);
-                    if (sc == SDL_SCANCODE_B) {
-                        mmState.zoom += ZOOM_STEP;
-                        if (mmState.zoom > ZOOM_MAX) mmState.zoom = ZOOM_MAX;
+                /* If enigme popup is open, forward events to it and skip normal game input */
+                if (enigmeOpen) {
+                    int fermer = 0;
+                    E22_GererEvenement(&enigme, &e, &fermer);
+                    if (fermer) { E22_Liberation(&enigme); enigmeOpen = 0; }
+                } else {
+                    if (e.type == SDL_MOUSEBUTTONDOWN)
+                        HandleGuideClick(&g, e.button.x, e.button.y);
+
+                    handlePlayerMovement(&e, &player);
+                    handleSnowballThrow(&e, &player, snowballs, &snowballCount);
+
+                    if (e.type == SDL_KEYDOWN) {
+                        SDL_Scancode sc = e.key.keysym.scancode;
+                        if (sc == SDL_SCANCODE_H || sc == SDL_SCANCODE_F1)
+                            g.showGuide = !g.showGuide;
+                        else if (sc == SDL_SCANCODE_ESCAPE) {
+                            if (g.showGuide) g.showGuide = 0;
+                            else { memset(keys, 0, sizeof(keys)); g.state = STATE_MENU; }
+                        } else
+                            keys[sc] = 1;
+                        if (g.splitScreen) printf("DEBUG KEYDOWN sc=%d(%s) keys[%d]=%d\n", sc, SDL_GetScancodeName(sc), sc, keys[sc]);
+                        if (sc == SDL_SCANCODE_B) {
+                            mmState.zoom += ZOOM_STEP;
+                            if (mmState.zoom > ZOOM_MAX) mmState.zoom = ZOOM_MAX;
+                        }
+                        if (sc == SDL_SCANCODE_N) {
+                            mmState.zoom -= ZOOM_STEP;
+                            if (mmState.zoom < ZOOM_MIN) mmState.zoom = ZOOM_MIN;
+                        }
                     }
-                    if (sc == SDL_SCANCODE_N) {
-                        mmState.zoom -= ZOOM_STEP;
-                        if (mmState.zoom < ZOOM_MIN) mmState.zoom = ZOOM_MIN;
+                    if (e.type == SDL_KEYUP) {
+                        keys[e.key.keysym.scancode] = 0;
+                        if (g.splitScreen) printf("DEBUG KEYUP sc=%d(%s) keys[%d]=%d\n", e.key.keysym.scancode, SDL_GetScancodeName(e.key.keysym.scancode), e.key.keysym.scancode, keys[e.key.keysym.scancode]);
                     }
-                }
-                if (e.type == SDL_KEYUP) {
-                    keys[e.key.keysym.scancode] = 0;
-                    if (g.splitScreen) printf("DEBUG KEYUP sc=%d(%s) keys[%d]=%d\n", e.key.keysym.scancode, SDL_GetScancodeName(e.key.keysym.scancode), e.key.keysym.scancode, keys[e.key.keysym.scancode]);
                 }
             }
         }
 
 
         if (g.state == STATE_GAME) {
+            Uint32 now = SDL_GetTicks();
+            if (nextEnigmeTick == 0)
+                nextEnigmeTick = now + 5000 + (Uint32)(rand() % 10001);
+
+            if (!enigmeOpen && now >= nextEnigmeTick) {
+                if (!E22_Initialisation(&enigme) || !E22_Load(&enigme, g.renderer)) {
+                    fprintf(stderr, "[E22] impossible de charger l'enigme\n");
+                    nextEnigmeTick = now + 8000;
+                } else {
+                    enigmeOpen = 1;
+                    nextEnigmeTick = now + 15000 + (Uint32)(rand() % 15001);
+                }
+            }
+
+            if (enigmeOpen) {
+                SDL_Delay(16);
+                continue;
+            }
+
             SDL_Rect oldPos = g.player1.rect;
             if (g.splitScreen)
                 UpdatePlayersSplit(&g, keys, LEVEL_WIDTH, LEVEL_HEIGHT);
@@ -213,14 +257,17 @@ int main(int argc, char *argv[])
             if (mmState.borderTimer > 0)
                 mmState.borderTimer--;
             updateEtincelle(&etincelle);
+        } else {
+            nextEnigmeTick = 0;
         }
         SDL_Delay(16);
     }
     SDL_StopTextInput();
     Liberation(&etincelle, NULL, maskSurf, &mm);
+    /* Free enigme resources if loaded */
+    if (enigmeOpen) E22_Liberation(&enigme);
     destroyAll(&enemy, &spider, &falling, collisionSound, &hud, &snowballs[0]);
     if (backgroundMusic) Mix_FreeMusic(backgroundMusic);
     CleanupSDL(&g);
     return 0;
 }
-
