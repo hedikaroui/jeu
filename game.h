@@ -142,6 +142,16 @@ typedef struct {
     SDL_Texture  *psSourisTex;
     SDL_Texture  *psSourisHoverTex;
     SDL_Texture  *psScoreBtnTex;
+    SDL_Texture  *psMonoBtnTex;
+    SDL_Texture  *psMonoBtnHoverTex;
+    SDL_Texture  *psMultiBtnTex;
+    SDL_Texture  *psMultiBtnHoverTex;
+    SDL_Texture  *psNamePlayer1Tex;
+    SDL_Texture  *psNamePlayer2Tex;
+    SDL_Texture  *psHelpIconTex;
+    SDL_Texture  *psHelpIconHoverTex;
+    SDL_Texture  *psHelpButtonTex;
+    int           player_mode;      /* 1 mono, 2 duo */
 
     /* ── OPTIONS: Écran options ── */
     SDL_Texture  *optionsBg;        /* options.png */
@@ -199,10 +209,23 @@ Mix_Music*   ChargerMusique(const char *fichier);
 Mix_Chunk*   ChargerSon    (const char *fichier);
 
 /* ══════════════════════════════════════
+   PROTOTYPES – UI helper
+══════════════════════════════════════ */
+void box_message(SDL_Renderer *renderer, TTF_Font *font, const char *message, SDL_Rect box);
+
+/* ══════════════════════════════════════
    PROTOTYPES – Lifecycle (Initialisation / Liberation)
 ══════════════════════════════════════ */
 int  Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer);
 void Liberation    (Game *game, SDL_Window  *window, SDL_Renderer  *renderer);
+
+/* ══════════════════════════════════════
+   PROTOTYPES – game_loop.c (Boucle principale)
+══════════════════════════════════════ */
+void GameLoop_ModuleInitialisationEtat(Game *game, SDL_Renderer *renderer);
+void GameLoop_ModuleInput             (Game *game);
+void GameLoop_ModuleUpdate            (Game *game);
+void GameLoop_ModuleAffichage         (Game *game, SDL_Renderer *renderer);
 
 /* ══════════════════════════════════════
    PROTOTYPES – background.c
@@ -222,19 +245,21 @@ int  is_music_playing(void);
 int  is_music_paused(void);
 
 /* ══════════════════════════════════════
-   PROTOTYPES – game_states.c (Menu principal)
+   PROTOTYPES – menu.c (Menu principal)
 ══════════════════════════════════════ */
+void Menu_Preparer      (Game *game, SDL_Renderer *renderer);
 void Menu_LectureEntree(Game *game);
+void Menu_MiseAJour    (Game *game);
 void Menu_Affichage    (Game *game, SDL_Renderer *renderer);
 
 /* ══════════════════════════════════════
-   PROTOTYPES – game_states.c (Leaderboard)
+   PROTOTYPES – leaderboard.c (Leaderboard)
 ══════════════════════════════════════ */
 void Leaderboard_LectureEntree(Game *game);
 void Leaderboard_Affichage    (Game *game, SDL_Renderer *renderer);
 
 /* ══════════════════════════════════════
-   PROTOTYPES – game_states.c (Sauvegarde)
+   PROTOTYPES – save.c (Sauvegarde)
 ══════════════════════════════════════ */
 int  Save_Charger       (Game *game, SDL_Renderer *renderer);
 void Save_LectureEntree (Game *game);
@@ -242,7 +267,7 @@ void Save_Affichage     (Game *game, SDL_Renderer *renderer);
 void Save_MiseAJour     (Game *game);
 
 /* ══════════════════════════════════════
-   PROTOTYPES – game_states.c (Sélection joueurs)
+   PROTOTYPES – player_select_state.c (Sélection joueurs)
 ══════════════════════════════════════ */
 int  PlayerSelect_Charger       (Game *game, SDL_Renderer *renderer);
 void PlayerSelect_LectureEntree (Game *game);
@@ -250,7 +275,7 @@ void PlayerSelect_Affichage     (Game *game, SDL_Renderer *renderer);
 void PlayerSelect_MiseAJour     (Game *game);
 
 /* ══════════════════════════════════════
-   PROTOTYPES – game_states.c (Écran jeu)
+   PROTOTYPES – player_select_state.c / start_play_state.c (Écran jeu)
 ══════════════════════════════════════ */
 void Game_LectureEntree (Game *game);
 void Game_Affichage     (Game *game, SDL_Renderer *renderer);
@@ -260,7 +285,7 @@ void StartPlay_Affichage     (Game *game, SDL_Renderer *renderer);
 void StartPlay_MiseAJour     (Game *game);
 
 /* ══════════════════════════════════════
-   PROTOTYPES – game_states.c (Options)
+   PROTOTYPES – options.c (Options)
 ══════════════════════════════════════ */
 int  Options_Charger       (Game *game, SDL_Renderer *renderer);
 void Options_LectureEntree (Game *game);
@@ -268,7 +293,7 @@ void Options_Affichage     (Game *game, SDL_Renderer *renderer);
 void Options_MiseAJour     (Game *game);
 
 /* ══════════════════════════════════════
-   PROTOTYPES – game_states.c (Games/Gifts)
+   PROTOTYPES – games_state.c (Games/Gifts)
 ══════════════════════════════════════ */
 int  Games_Charger       (Game *game, SDL_Renderer *renderer);
 void Games_LectureEntree (Game *game);
