@@ -385,12 +385,7 @@ typedef struct {
     int running;
 } Game;
 
-extern Background background;
 #include "allinone2.h"
-
-SDL_Texture *ChargerTexture(SDL_Renderer *renderer, const char *fichier);
-Mix_Music *ChargerMusique(const char *fichier);
-Mix_Chunk *ChargerSon(const char *fichier);
 
 void box_message(SDL_Renderer *renderer, TTF_Font *font, const char *message, SDL_Rect box);
 
@@ -404,20 +399,6 @@ void GameLoop_ModuleInitialisationEtat(Game *game, SDL_Renderer *renderer);
 void GameLoop_ModuleInput(Game *game);
 void GameLoop_ModuleUpdate(Game *game);
 void GameLoop_ModuleAffichage(Game *game, SDL_Renderer *renderer);
-
-int init_background(SDL_Renderer *renderer, const char *image_path);
-void draw_background(SDL_Renderer *renderer);
-void update_background(void);
-void cleanup_background(void);
-int init_background_music(const char *music_path, int volume);
-void play_background_music(void);
-void stop_background_music(void);
-void pause_background_music(void);
-void resume_background_music(void);
-void set_background_music_volume(int volume);
-int get_background_music_volume(void);
-int is_music_playing(void);
-int is_music_paused(void);
 
 void Menu_Preparer(Game *game, SDL_Renderer *renderer);
 void Menu_LectureEntree(Game *game);
@@ -461,7 +442,5 @@ void Games_MiseAJour(Game *game);
 const AnimationMovement *animation_get_movement(MovementType type);
 const AnimationMovement *animation_find_movement(const char *name);
 size_t animation_movement_count(void);
-
-int main(void);
 
 #endif
