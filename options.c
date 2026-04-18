@@ -1,28 +1,5 @@
 #include "game.h"
-#include "assets_catalog.h"
 #include <stdio.h>
-
-typedef enum {
-    OPTIONS_COMMAND_NONE,
-    OPTIONS_COMMAND_BACK,
-    OPTIONS_COMMAND_VOLUME_DOWN,
-    OPTIONS_COMMAND_VOLUME_MUTE,
-    OPTIONS_COMMAND_VOLUME_UP,
-    OPTIONS_COMMAND_FULLSCREEN
-} OptionsCommand;
-
-typedef struct {
-    SDL_Rect backgroundRect;
-    SDL_Rect minusRect;
-    SDL_Rect muteRect;
-    SDL_Rect plusRect;
-    SDL_Rect fullscreenRect;
-    int hoverMinus;
-    int hoverMute;
-    int hoverPlus;
-    int hoverFullscreen;
-    OptionsCommand pendingCommand;
-} OptionsUiState;
 
 static OptionsUiState optionsUi = {.pendingCommand = OPTIONS_COMMAND_NONE};
 
@@ -220,7 +197,7 @@ void Options_MiseAJour(Game *game) {
 
     switch (optionsUi.pendingCommand) {
         case OPTIONS_COMMAND_BACK:
-            game->currentState = STATE_MENU;
+            Game_SetSubState(game, STATE_MENU);
             if (game->music) Mix_PlayMusic(game->music, -1);
             break;
         case OPTIONS_COMMAND_VOLUME_DOWN:

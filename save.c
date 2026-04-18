@@ -1,5 +1,4 @@
 #include "game.h"
-#include "assets_catalog.h"
 #include <stdio.h>
 
 int Save_Charger(Game *game, SDL_Renderer *renderer) {
@@ -57,7 +56,7 @@ void Save_LectureEntree(Game *game) {
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_QUIT) { game->running = 0; return; }
         if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) {
-            game->currentState = STATE_MENU;
+            Game_SetSubState(game, STATE_MENU);
             if (game->music) Mix_PlayMusic(game->music, -1);
             return;
         }
@@ -110,24 +109,24 @@ void Save_MiseAJour(Game *game) {
     if (game->clic_bouton == 0) {
         if (game->saveSound) Mix_PlayChannel(-1, game->saveSound, 0);
         game->saveEtat = 1;
-        game->currentState = STATE_SAVE_CHOICE;
+        Game_SetSubState(game, STATE_SAVE_CHOICE);
     }
     if (game->clic_bouton == 1) {
         if (game->saveSound) Mix_PlayChannel(-1, game->saveSound, 0);
-        game->saveEtat = 0; game->currentState = STATE_MENU;
+        game->saveEtat = 0; Game_SetSubState(game, STATE_MENU);
         if (game->music) Mix_PlayMusic(game->music, -1);
     }
     if (game->clic_bouton == 2) {
         if (game->saveSound) Mix_PlayChannel(-1, game->saveSound, 0);
         printf("Chargement sauvegarde\n");
         game->saveEtat = 0;
-        game->currentState = STATE_PLAYER;
+        Game_SetSubState(game, STATE_PLAYER);
     }
     if (game->clic_bouton == 3) {
         if (game->saveSound) Mix_PlayChannel(-1, game->saveSound, 0);
         printf("Nouvelle partie\n");
         game->saveEtat = 0;
-        game->currentState = STATE_PLAYER;
+        Game_SetSubState(game, STATE_PLAYER);
     }
     SDL_Delay(16);
 }

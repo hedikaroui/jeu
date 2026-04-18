@@ -1,5 +1,4 @@
 #include "game.h"
-#include "assets_catalog.h"
 #include <stdio.h>
 
 static SDL_Rect quizBtnARect = {120, 430, 150, 120};
@@ -68,11 +67,11 @@ void Games_LectureEntree(Game *game) {
         }
 
         if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
-            game->currentState = STATE_MENU;
+            Game_SetSubState(game, STATE_MENU);
             return;
         }
 
-        if (e.type == SDL_MOUSEMOTION && game->currentState == STATE_ENIGME_QUIZ) {
+        if (e.type == SDL_MOUSEMOTION && game->currentSubState == STATE_ENIGME_QUIZ) {
             int mx = e.motion.x, my = e.motion.y;
             quizHoverA = point_in_rect(quizBtnARect, mx, my);
             quizHoverB = point_in_rect(quizBtnBRect, mx, my);
@@ -81,7 +80,7 @@ void Games_LectureEntree(Game *game) {
 
         if (e.type == SDL_MOUSEBUTTONDOWN) {
             int mx = e.button.x, my = e.button.y;
-            if (game->currentState == STATE_ENIGME_QUIZ) {
+            if (game->currentSubState == STATE_ENIGME_QUIZ) {
                 if (point_in_rect(quizBtnARect, mx, my)) {
                     quizSelected = 0;
                     if (game->quizBeep) Mix_PlayChannel(-1, game->quizBeep, 0);
@@ -97,14 +96,14 @@ void Games_LectureEntree(Game *game) {
                     if (game->quizLaugh) Mix_PlayChannel(-1, game->quizLaugh, 0);
                 }
             } else {
-                game->currentState = STATE_ENIGME_QUIZ;
+                Game_SetSubState(game, STATE_ENIGME_QUIZ);
             }
         }
     }
 }
 
 void Games_Affichage(Game *game, SDL_Renderer *renderer) {
-    if (game->currentState == STATE_ENIGME_QUIZ) {
+    if (game->currentSubState == STATE_ENIGME_QUIZ) {
         if (game->quizBg2) SDL_RenderCopy(renderer, game->quizBg2, NULL, NULL);
         else if (game->quizBg1) SDL_RenderCopy(renderer, game->quizBg1, NULL, NULL);
 

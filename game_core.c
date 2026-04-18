@@ -1,10 +1,63 @@
 #include "game.h"
-#include "assets_catalog.h"
 #include <stdio.h>
 #include <string.h>
 
-/* Implemented in start_play_state.c */
-void StartPlay_Cleanup(void);
+GameState Game_MainStateFromSubState(GameSubState subState) {
+    switch (subState) {
+        case STATE_GAME:
+        case STATE_START_PLAY:
+        case STATE_ENIGME:
+        case STATE_ENIGME_QUIZ:
+            return MAIN_STATE_GAME;
+
+        case STATE_SCORES_INPUT:
+        case STATE_SCORES_LIST:
+            return MAIN_STATE_SCORE;
+
+        case STATE_HISTOIRE:
+            return MAIN_STATE_HISTORY;
+
+        case STATE_PLAYER:
+        case STATE_PLAYER_CONFIG:
+            return MAIN_STATE_PLAYER;
+
+        case STATE_MENU:
+        case STATE_OPTIONS:
+        case STATE_SAVE:
+        case STATE_SAVE_CHOICE:
+        case STATE_QUIT:
+        default:
+            return MAIN_STATE_MENU;
+    }
+}
+
+void Game_SetSubState(Game *game, GameSubState subState) {
+    if (!game) return;
+    game->currentSubState = subState;
+    game->currentState = Game_MainStateFromSubState(subState);
+}
+
+void Game_ResetRuntime(Game *game) {
+    if (!game) return;
+
+    game->gameLoaded = 0;
+    game->gameLastTick = 0;
+    game->gameCharacter.up = 0;
+    game->gameCharacter.jumpPhase = 0;
+    game->gameCharacter.posinit = 0;
+    game->gameCharacter.posinitX = 0;
+    game->gameCharacter.jumpRelX = -50.0;
+    game->gameCharacter.jumpRelY = 0.0;
+    game->gameCharacter.jumpProgress = 0.0;
+    game->gameCharacter.jumpDir = 0;
+    game->gameCharacter.groundY = 0;
+    game->gameCharacter.facing = 1;
+    game->gameCharacter.moving = 0;
+    game->gameCharacter.movementState = 0;
+    game->gameCharacter.pendingJump = 0;
+    game->gameCharacter.frameIndex = 0;
+    game->gameCharacter.lastFrameTick = 0;
+}
 
 int Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer) {
     memset(game, 0, sizeof(*game));
@@ -83,7 +136,8 @@ int Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer) {
     game->click = Mix_LoadWAV(SOUND_CLICK);
     game->scoreJ1Tex = IMG_LoadTexture(*renderer, SCORE_BUTTON_NORMAL);
     game->scoreJ2Tex = IMG_LoadTexture(*renderer, SCORE_BUTTON_HOVER);
-    game->startHeartTex = NULL;
+    game->startPlayer1LifeTex = NULL;
+    game->startPlayer2LifeTex = NULL;
     game->startTextTex = NULL;
     game->startTextRect = (SDL_Rect){0, 0, 0, 0};
     game->startPlayLoaded = 0;
@@ -125,6 +179,8 @@ int Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer) {
     game->quizBeep = NULL;
     game->quizBeep2 = NULL;
     game->quizLaugh = NULL;
+    memset(&game->gameCharacter, 0, sizeof(game->gameCharacter));
+    Game_ResetRuntime(game);
 
     game->font = TTF_OpenFont(GAME_ASSETS.fonts.system_bold, 32);
     if (!game->font)
@@ -135,7 +191,7 @@ int Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer) {
     game->window = *window;
     game->volume = Mix_VolumeMusic(-1);
     game->fullscreen = 0;
-    game->currentState = STATE_MENU;
+    Game_SetSubState(game, STATE_MENU);
     game->running = 1;
     return 1;
 }
@@ -195,7 +251,8 @@ void Liberation(Game *game, SDL_Window *window, SDL_Renderer *renderer) {
     if (game->leaderTex) SDL_DestroyTexture(game->leaderTex);
     if (game->scoreJ1Tex) SDL_DestroyTexture(game->scoreJ1Tex);
     if (game->scoreJ2Tex) SDL_DestroyTexture(game->scoreJ2Tex);
-    if (game->startHeartTex) SDL_DestroyTexture(game->startHeartTex);
+    if (game->startPlayer1LifeTex) SDL_DestroyTexture(game->startPlayer1LifeTex);
+    if (game->startPlayer2LifeTex) SDL_DestroyTexture(game->startPlayer2LifeTex);
     if (game->startTextTex) SDL_DestroyTexture(game->startTextTex);
     if (game->click) Mix_FreeChunk(game->click);
 
@@ -223,6 +280,14 @@ void Liberation(Game *game, SDL_Window *window, SDL_Renderer *renderer) {
     if (game->quizBeep) Mix_FreeChunk(game->quizBeep);
     if (game->quizBeep2) Mix_FreeChunk(game->quizBeep2);
     if (game->quizLaugh) Mix_FreeChunk(game->quizLaugh);
+
+    if (game->gameCharacter.idleTexture) SDL_DestroyTexture(game->gameCharacter.idleTexture);
+    if (game->gameCharacter.idleBackTexture) SDL_DestroyTexture(game->gameCharacter.idleBackTexture);
+    if (game->gameCharacter.walkTexture) SDL_DestroyTexture(game->gameCharacter.walkTexture);
+    if (game->gameCharacter.walkBackTexture) SDL_DestroyTexture(game->gameCharacter.walkBackTexture);
+    if (game->gameCharacter.runTexture) SDL_DestroyTexture(game->gameCharacter.runTexture);
+    if (game->gameCharacter.jumpTexture) SDL_DestroyTexture(game->gameCharacter.jumpTexture);
+    if (game->gameCharacter.jumpBackTexture) SDL_DestroyTexture(game->gameCharacter.jumpBackTexture);
 
     StartPlay_Cleanup();
 

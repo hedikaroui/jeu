@@ -1,28 +1,6 @@
 #include "game.h"
-#include "assets_catalog.h"
 #include <math.h>
 #include <string.h>
-
-typedef enum {
-    MENU_COMMAND_NONE,
-    MENU_COMMAND_PLAY,
-    MENU_COMMAND_OPTIONS,
-    MENU_COMMAND_SAVE,
-    MENU_COMMAND_SCORES,
-    MENU_COMMAND_GIFT,
-    MENU_COMMAND_QUIT
-} MenuCommand;
-
-typedef struct {
-    SDL_Rect backgroundRect;
-    SDL_Rect giftRect;
-    int hoveredButton;
-    int clickedButton;
-    int hoverGift;
-    int clickGift;
-    int hoverSoundPending;
-    MenuCommand pendingCommand;
-} MenuUiState;
 
 static MenuUiState menuUi = {
     .hoveredButton = -1,
@@ -249,26 +227,26 @@ void Menu_MiseAJour(Game *game) {
     switch (menuUi.pendingCommand) {
         case MENU_COMMAND_PLAY:
             if (game->click) Mix_PlayChannel(-1, game->click, 0);
-            game->currentState = STATE_SAVE;
+            Game_SetSubState(game, STATE_SAVE);
             break;
         case MENU_COMMAND_OPTIONS:
             if (game->click) Mix_PlayChannel(-1, game->click, 0);
-            game->currentState = STATE_OPTIONS;
+            Game_SetSubState(game, STATE_OPTIONS);
             break;
         case MENU_COMMAND_SAVE:
             if (game->click) Mix_PlayChannel(-1, game->click, 0);
-            game->currentState = STATE_SAVE;
+            Game_SetSubState(game, STATE_SAVE);
             break;
         case MENU_COMMAND_SCORES:
             if (game->click) Mix_PlayChannel(-1, game->click, 0);
-            game->currentState = STATE_SCORES_INPUT;
+            Game_SetSubState(game, STATE_SCORES_INPUT);
             break;
         case MENU_COMMAND_GIFT:
             if (game->click) Mix_PlayChannel(-1, game->click, 0);
-            game->currentState = STATE_ENIGME_QUIZ;
+            Game_SetSubState(game, STATE_ENIGME_QUIZ);
             break;
         case MENU_COMMAND_QUIT:
-            game->currentState = STATE_QUIT;
+            Game_SetSubState(game, STATE_QUIT);
             break;
         case MENU_COMMAND_NONE:
         default:

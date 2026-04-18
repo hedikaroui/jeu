@@ -8,7 +8,7 @@ static int joueurs_non_configures(const Game *game) {
 }
 
 void GameLoop_ModuleInitialisationEtat(Game *game, SDL_Renderer *renderer) {
-    switch (game->currentState) {
+    switch (game->currentSubState) {
         case STATE_OPTIONS:
             if (!game->optionsLoaded) Options_Charger(game, renderer);
             break;
@@ -34,6 +34,7 @@ void GameLoop_ModuleInitialisationEtat(Game *game, SDL_Renderer *renderer) {
 
         case STATE_GAME:
             if (joueurs_non_configures(game)) PlayerSelect_Charger(game, renderer);
+            else if (!game->gameLoaded) Game_Charger(game, renderer);
             break;
 
         case STATE_MENU:
@@ -47,7 +48,7 @@ void GameLoop_ModuleInitialisationEtat(Game *game, SDL_Renderer *renderer) {
 }
 
 void GameLoop_ModuleInput(Game *game) {
-    switch (game->currentState) {
+    switch (game->currentSubState) {
         case STATE_MENU:
             Menu_LectureEntree(game);
             break;
@@ -81,7 +82,7 @@ void GameLoop_ModuleInput(Game *game) {
             break;
 
         case STATE_HISTOIRE:
-            game->currentState = STATE_MENU;
+            Game_SetSubState(game, STATE_MENU);
             break;
 
         case STATE_GAME:
@@ -96,7 +97,7 @@ void GameLoop_ModuleInput(Game *game) {
 }
 
 void GameLoop_ModuleUpdate(Game *game) {
-    switch (game->currentState) {
+    switch (game->currentSubState) {
         case STATE_MENU:
             Menu_MiseAJour(game);
             break;
@@ -126,6 +127,7 @@ void GameLoop_ModuleUpdate(Game *game) {
 
         case STATE_GAME:
             if (joueurs_non_configures(game)) PlayerSelect_MiseAJour(game);
+            else Game_MiseAJour(game);
             break;
 
         case STATE_HISTOIRE:
@@ -141,7 +143,7 @@ void GameLoop_ModuleAffichage(Game *game, SDL_Renderer *renderer) {
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
 
-    switch (game->currentState) {
+    switch (game->currentSubState) {
         case STATE_MENU:
             Menu_Affichage(game, renderer);
             break;
@@ -185,7 +187,7 @@ void GameLoop_ModuleAffichage(Game *game, SDL_Renderer *renderer) {
             break;
     }
 
-    if (game->currentState != STATE_QUIT) {
+    if (game->currentSubState != STATE_QUIT) {
         SDL_RenderPresent(renderer);
     }
 }

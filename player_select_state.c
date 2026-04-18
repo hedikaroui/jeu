@@ -1,12 +1,11 @@
 #include "game.h"
-#include "assets_catalog.h"
 #include <stdio.h>
 #include <string.h>
 
 static SDL_Rect ps_p1_frame, ps_p2_frame;
 static SDL_Rect ps_j1_btn, ps_j2_btn;
 static SDL_Rect ps_input1, ps_input2;
-static SDL_Rect ps_controls[2][2]; /* [player][0 keyboard, 1 controller] */
+static SDL_Rect ps_controls[2][3]; /* [player][0 keyboard, 1 controller, 2 mouse] */
 static SDL_Rect ps_score_btn;
 static SDL_Rect ps_mode_mono_btn, ps_mode_multi_btn;
 static SDL_Rect ps_player1_photo_rect;
@@ -16,8 +15,8 @@ static int ps_cursor_on = 1;
 static Uint32 ps_cursor_timer = 0;
 static int ps_hover_j1 = 0, ps_hover_j2 = 0;
 static int ps_last_hover_j1 = 0, ps_last_hover_j2 = 0;
-static int ps_hover_controls[2][2] = {{0, 0}, {0, 0}};
-static int ps_last_hover_controls[2][2] = {{0, 0}, {0, 0}};
+static int ps_hover_controls[2][3] = {{0, 0, 0}, {0, 0, 0}};
+static int ps_last_hover_controls[2][3] = {{0, 0, 0}, {0, 0, 0}};
 static int ps_selected_controls[2] = {-1, -1};
 static int ps_hover_score = 0;
 static int ps_last_hover_score = 0;
@@ -161,6 +160,10 @@ int PlayerSelect_Charger(Game *game, SDL_Renderer *renderer) {
         game->psManetteTex = load_texture_first(renderer, CHAR_MANETTE_NORMAL_1, CHAR_MANETTE_NORMAL_2, CHAR_MANETTE_NORMAL_3);
     if (!game->psManetteHoverTex)
         game->psManetteHoverTex = IMG_LoadTexture(renderer, CHAR_MANETTE_HOVER);
+    if (!game->psSourisTex)
+        game->psSourisTex = load_texture_first(renderer, CHAR_SOURIS_NORMAL_1, CHAR_SOURIS_NORMAL_2, CHAR_SOURIS_NORMAL_3);
+    if (!game->psSourisHoverTex)
+        game->psSourisHoverTex = IMG_LoadTexture(renderer, CHAR_SOURIS_HOVER);
     if (!game->psScoreBtnTex)
         game->psScoreBtnTex = IMG_LoadTexture(renderer, PLAYER_SELECT_SCORE_BUTTON);
     if (!game->psMonoBtnTex)
@@ -198,19 +201,21 @@ int PlayerSelect_Charger(Game *game, SDL_Renderer *renderer) {
     ps_input1 = (SDL_Rect){40, 410, 360, 56};
     ps_input2 = (SDL_Rect){WIDTH - 400, 410, 360, 56};
     {
-        int iconW = 120;
-        int iconH = 82;
-        int gap = 24;
+        int iconW = 96;
+        int iconH = 74;
+        int gap = 12;
         int y = ps_input1.y + ps_input1.h + 16;
-        int totalW = iconW * 2 + gap;
+        int totalW = iconW * 3 + (gap * 2);
 
         int p1StartX = ps_input1.x + (ps_input1.w - totalW) / 2;
         int p2StartX = ps_input2.x + (ps_input2.w - totalW) / 2;
 
         ps_controls[0][0] = (SDL_Rect){p1StartX, y, iconW, iconH};
         ps_controls[0][1] = (SDL_Rect){p1StartX + iconW + gap, y, iconW, iconH};
+        ps_controls[0][2] = (SDL_Rect){p1StartX + (iconW + gap) * 2, y, iconW, iconH};
         ps_controls[1][0] = (SDL_Rect){p2StartX, y, iconW, iconH};
         ps_controls[1][1] = (SDL_Rect){p2StartX + iconW + gap, y, iconW, iconH};
+        ps_controls[1][2] = (SDL_Rect){p2StartX + (iconW + gap) * 2, y, iconW, iconH};
     }
     ps_score_btn = (SDL_Rect){(WIDTH - 360) / 2, HEIGHT - 100, 360, 76};
     {
@@ -233,10 +238,12 @@ int PlayerSelect_Charger(Game *game, SDL_Renderer *renderer) {
     ps_focus_field = 0;
     ps_hover_j1 = ps_hover_j2 = 0;
     ps_last_hover_j1 = ps_last_hover_j2 = 0;
-    ps_hover_controls[0][0] = ps_hover_controls[0][1] = 0;
-    ps_hover_controls[1][0] = ps_hover_controls[1][1] = 0;
-    ps_last_hover_controls[0][0] = ps_last_hover_controls[0][1] = 0;
-    ps_last_hover_controls[1][0] = ps_last_hover_controls[1][1] = 0;
+    for (int p = 0; p < 2; p++) {
+        for (int c = 0; c < 3; c++) {
+            ps_hover_controls[p][c] = 0;
+            ps_last_hover_controls[p][c] = 0;
+        }
+    }
     ps_selected_controls[0] = -1;
     ps_selected_controls[1] = -1;
     ps_hover_score = 0;
@@ -260,7 +267,7 @@ int PlayerSelect_Charger(Game *game, SDL_Renderer *renderer) {
 
 void PlayerSelect_LectureEntree(Game *game) {
     SDL_Event e;
-    if (game->currentState == STATE_PLAYER) {
+    if (game->currentSubState == STATE_PLAYER) {
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) {
                 game->running = 0;
@@ -284,20 +291,20 @@ void PlayerSelect_LectureEntree(Game *game) {
             if (e.type == SDL_KEYDOWN) {
                 SDL_Keycode sym = e.key.keysym.sym;
                 if (sym == SDLK_ESCAPE) {
-                    game->currentState = STATE_MENU;
+                    Game_SetSubState(game, STATE_MENU);
                     if (game->music) Mix_PlayMusic(game->music, -1);
                     return;
                 }
                 if (sym == SDLK_1 || sym == SDLK_KP_1) {
                     game->player_mode = 1;
                     if (game->click) Mix_PlayChannel(-1, game->click, 0);
-                    game->currentState = STATE_PLAYER_CONFIG;
+                    Game_SetSubState(game, STATE_PLAYER_CONFIG);
                     return;
                 }
                 if (sym == SDLK_2 || sym == SDLK_KP_2) {
                     game->player_mode = 2;
                     if (game->click) Mix_PlayChannel(-1, game->click, 0);
-                    game->currentState = STATE_PLAYER_CONFIG;
+                    Game_SetSubState(game, STATE_PLAYER_CONFIG);
                     return;
                 }
             }
@@ -308,13 +315,13 @@ void PlayerSelect_LectureEntree(Game *game) {
                 if (ps_point_in_rect(ps_mode_mono_btn, mx, my)) {
                     game->player_mode = 1;
                     if (game->click) Mix_PlayChannel(-1, game->click, 0);
-                    game->currentState = STATE_PLAYER_CONFIG;
+                    Game_SetSubState(game, STATE_PLAYER_CONFIG);
                     return;
                 }
                 if (ps_point_in_rect(ps_mode_multi_btn, mx, my)) {
                     game->player_mode = 2;
                     if (game->click) Mix_PlayChannel(-1, game->click, 0);
-                    game->currentState = STATE_PLAYER_CONFIG;
+                    Game_SetSubState(game, STATE_PLAYER_CONFIG);
                     return;
                 }
             }
@@ -333,24 +340,31 @@ void PlayerSelect_LectureEntree(Game *game) {
             int my = e.motion.y;
             ps_hover_player1_photo = ps_point_in_rect(ps_player1_photo_rect, mx, my);
             for (int p = 0; p < 2; p++) {
-                for (int c = 0; c < 2; c++) {
+                for (int c = 0; c < 3; c++) {
                     ps_hover_controls[p][c] = ps_point_in_rect(ps_controls[p][c], mx, my);
                 }
             }
             ps_hover_score = ps_point_in_rect(ps_score_btn, mx, my);
 
-            if (game->click && ((ps_hover_controls[0][0] && !ps_last_hover_controls[0][0]) ||
-                                (ps_hover_controls[0][1] && !ps_last_hover_controls[0][1]) ||
-                                (ps_hover_controls[1][0] && !ps_last_hover_controls[1][0]) ||
-                                (ps_hover_controls[1][1] && !ps_last_hover_controls[1][1]) ||
-                                (ps_hover_score && !ps_last_hover_score))) {
+            int hovered_new_control = 0;
+            for (int p = 0; p < 2 && !hovered_new_control; p++) {
+                for (int c = 0; c < 3; c++) {
+                    if (ps_hover_controls[p][c] && !ps_last_hover_controls[p][c]) {
+                        hovered_new_control = 1;
+                        break;
+                    }
+                }
+            }
+
+            if (game->click && (hovered_new_control || (ps_hover_score && !ps_last_hover_score))) {
                 Mix_PlayChannel(-1, game->click, 0);
             }
 
-            ps_last_hover_controls[0][0] = ps_hover_controls[0][0];
-            ps_last_hover_controls[0][1] = ps_hover_controls[0][1];
-            ps_last_hover_controls[1][0] = ps_hover_controls[1][0];
-            ps_last_hover_controls[1][1] = ps_hover_controls[1][1];
+            for (int p = 0; p < 2; p++) {
+                for (int c = 0; c < 3; c++) {
+                    ps_last_hover_controls[p][c] = ps_hover_controls[p][c];
+                }
+            }
             ps_last_hover_score = ps_hover_score;
         }
 
@@ -362,7 +376,7 @@ void PlayerSelect_LectureEntree(Game *game) {
                     ps_focus_field = 0;
                     SDL_StopTextInput();
                 } else {
-                    game->currentState = STATE_MENU;
+                    Game_SetSubState(game, STATE_MENU);
                     if (game->music) Mix_PlayMusic(game->music, -1);
                 }
                 return;
@@ -405,7 +419,8 @@ void PlayerSelect_LectureEntree(Game *game) {
                 ps_focus_field = 0;
                 SDL_StopTextInput();
                 printf("Joueur 1: %s | Joueur 2: %s\n", game->player1_name, game->player2_name);
-                game->currentState = STATE_GAME;
+                Game_ResetRuntime(game);
+                Game_SetSubState(game, STATE_GAME);
                 return;
             }
 
@@ -449,29 +464,23 @@ void PlayerSelect_LectureEntree(Game *game) {
                 SDL_StopTextInput();
             }
 
-            if (ps_point_in_rect(ps_controls[0][0], mx, my)) {
-                ps_selected_controls[0] = 0;
-                if (game->click) Mix_PlayChannel(-1, game->click, 0);
-                continue;
+            int picked_control = 0;
+            for (int p = 0; p < 2 && !picked_control; p++) {
+                for (int c = 0; c < 3; c++) {
+                    if (ps_point_in_rect(ps_controls[p][c], mx, my)) {
+                        ps_selected_controls[p] = c;
+                        picked_control = 1;
+                        break;
+                    }
+                }
             }
-            if (ps_point_in_rect(ps_controls[0][1], mx, my)) {
-                ps_selected_controls[0] = 1;
-                if (game->click) Mix_PlayChannel(-1, game->click, 0);
-                continue;
-            }
-            if (ps_point_in_rect(ps_controls[1][0], mx, my)) {
-                ps_selected_controls[1] = 0;
-                if (game->click) Mix_PlayChannel(-1, game->click, 0);
-                continue;
-            }
-            if (ps_point_in_rect(ps_controls[1][1], mx, my)) {
-                ps_selected_controls[1] = 1;
+            if (picked_control) {
                 if (game->click) Mix_PlayChannel(-1, game->click, 0);
                 continue;
             }
             if (ps_point_in_rect(ps_score_btn, mx, my)) {
                 if (game->click) Mix_PlayChannel(-1, game->click, 0);
-                game->currentState = STATE_SCORES_INPUT;
+                Game_SetSubState(game, STATE_SCORES_INPUT);
                 return;
             }
         }
@@ -491,7 +500,7 @@ void PlayerSelect_Affichage(Game *game, SDL_Renderer *renderer) {
     SDL_Color white = {255, 255, 255, 255};
     SDL_Color muted = {180, 180, 180, 255};
 
-    if (game->currentState == STATE_PLAYER) {
+    if (game->currentSubState == STATE_PLAYER) {
         if (game->psHelpButtonTex) {
             SDL_RenderCopy(renderer, game->psHelpButtonTex, NULL, &ps_help_top_right_rect);
         }
@@ -553,20 +562,25 @@ void PlayerSelect_Affichage(Game *game, SDL_Renderer *renderer) {
     ps_draw_text(renderer, font, strlen(ps_name2) ? ps_name2 : "Player 2 name...", strlen(ps_name2) ? white : muted, ps_input2.x + 8, ps_input2.y + 14);
 
     for (int p = 0; p < 2; p++) {
-        for (int c = 0; c < 2; c++) {
+        for (int c = 0; c < 3; c++) {
             SDL_Rect r = ps_controls[p][c];
             int active = ps_hover_controls[p][c] || (ps_selected_controls[p] == c);
             SDL_Texture *tex = NULL;
             if (c == 0) tex = active ? game->psKeyboardHoverTex : game->psKeyboardTex;
             if (c == 1) tex = active ? game->psManetteHoverTex : game->psManetteTex;
+            if (c == 2) tex = active ? game->psSourisHoverTex : game->psSourisTex;
             if (active) r.y -= 4;
             if (tex) SDL_RenderCopy(renderer, tex, NULL, &r);
+            if (game->psHelpIconTex && (c == 0 || c == 1)) {
+                SDL_Rect help_on_control = {r.x + r.w - 24, r.y + 4, 20, 20};
+                SDL_RenderCopy(renderer, game->psHelpIconTex, NULL, &help_on_control);
+            }
         }
     }
 
     if (SDL_GetTicks() < ps_control_warn_until) {
         SDL_Rect hint = {(WIDTH - 760) / 2, HEIGHT - 150, 760, 34};
-        ps_draw_center_text(renderer, font, "Choose keyboard or controller for each player first", white, hint);
+        ps_draw_center_text(renderer, font, "Choose keyboard, controller or mouse for each player first", white, hint);
     }
 
     if (ps_cursor_on && (ps_focus_field == 1 || ps_focus_field == 2) && font) {
@@ -615,55 +629,4 @@ void PlayerSelect_MiseAJour(Game *game) {
         ps_cursor_timer = now;
     }
     SDL_Delay(16);
-}
-
-void Game_LectureEntree(Game *game) {
-    SDL_Event e;
-    while (SDL_PollEvent(&e)) {
-        if (e.type == SDL_QUIT) {
-            game->running = 0;
-            return;
-        }
-        if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
-            game->currentState = STATE_MENU;
-            if (game->music) Mix_PlayMusic(game->music, -1);
-            return;
-        }
-    }
-}
-
-void Game_Affichage(Game *game, SDL_Renderer *renderer) {
-    if (game->gameBgTex)
-        SDL_RenderCopy(renderer, game->gameBgTex, NULL, NULL);
-    else if (game->background)
-        SDL_RenderCopy(renderer, game->background, NULL, NULL);
-
-    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-    SDL_Rect leftCard = {80, 140, 420, 500};
-    SDL_Rect rightCard = {WIDTH - 500, 140, 420, 500};
-    SDL_SetRenderDrawColor(renderer, 10, 10, 10, 140);
-    SDL_RenderFillRect(renderer, &leftCard);
-    SDL_RenderFillRect(renderer, &rightCard);
-    SDL_SetRenderDrawColor(renderer, 230, 230, 230, 255);
-    SDL_RenderDrawRect(renderer, &leftCard);
-    SDL_RenderDrawRect(renderer, &rightCard);
-
-    if (game->player1Tex) {
-        SDL_Rect p1 = {leftCard.x + 20, leftCard.y + 20, leftCard.w - 40, leftCard.h - 90};
-        SDL_RenderCopy(renderer, game->player1Tex, NULL, &p1);
-    }
-    if (game->player2Tex) {
-        SDL_Rect p2 = {rightCard.x + 20, rightCard.y + 20, rightCard.w - 40, rightCard.h - 90};
-        SDL_RenderCopy(renderer, game->player2Tex, NULL, &p2);
-    }
-
-    if (game->font) {
-        SDL_Color white = {255, 255, 255, 255};
-        ps_draw_center_text(renderer, game->font, game->player1_name, white,
-                            (SDL_Rect){leftCard.x, leftCard.y + leftCard.h - 58, leftCard.w, 40});
-        ps_draw_center_text(renderer, game->font, game->player2_name, white,
-                            (SDL_Rect){rightCard.x, rightCard.y + rightCard.h - 58, rightCard.w, 40});
-        ps_draw_center_text(renderer, game->font, "GAME STATE", white,
-                            (SDL_Rect){(WIDTH - 300) / 2, 40, 300, 50});
-    }
 }

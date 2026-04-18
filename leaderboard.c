@@ -23,16 +23,16 @@ void Leaderboard_LectureEntree(Game *game) {
             if (e.key.keysym.sym == SDLK_ESCAPE) {
                 game->inputActive = 0;
                 SDL_StopTextInput();
-                if (game->currentState == STATE_SCORES_LIST) {
-                    game->currentState = STATE_QUIT;
+                if (game->currentSubState == STATE_SCORES_LIST) {
+                    Game_SetSubState(game, STATE_QUIT);
                 } else {
-                    game->currentState = STATE_MENU;
+                    Game_SetSubState(game, STATE_MENU);
                     if (game->music) Mix_PlayMusic(game->music, -1);
                 }
                 return;
             }
             if (e.key.keysym.sym == SDLK_e) {
-                game->currentState = STATE_ENIGME_QUIZ;
+                Game_SetSubState(game, STATE_ENIGME_QUIZ);
                 return;
             }
         }
@@ -41,7 +41,7 @@ void Leaderboard_LectureEntree(Game *game) {
             int mx = e.button.x, my = e.button.y;
             if (SDL_PointInRect(&(SDL_Point){mx,my}, &game->backBtn.rect)) {
                 if (game->click) Mix_PlayChannel(-1, game->click, 0);
-                game->currentState = STATE_MENU;
+                Game_SetSubState(game, STATE_MENU);
                 game->inputActive = 0;
                 SDL_StopTextInput();
                 if (game->music) Mix_PlayMusic(game->music, -1);
@@ -49,7 +49,7 @@ void Leaderboard_LectureEntree(Game *game) {
             }
             if (SDL_PointInRect(&(SDL_Point){mx,my}, &scoreStateJBtnRect)) {
                 if (game->click) Mix_PlayChannel(-1, game->click, 0);
-                game->currentState = STATE_START_PLAY;
+                Game_SetSubState(game, STATE_START_PLAY);
                 return;
             }
             if (SDL_PointInRect(&(SDL_Point){mx,my}, &game->searchBox)) {
@@ -73,7 +73,7 @@ void Leaderboard_LectureEntree(Game *game) {
                 game->inputText[strlen(game->inputText)-1] = '\0';
             if (e.key.keysym.sym == SDLK_RETURN) {
                 printf("Recherche joueur: %s\n", game->inputText);
-                game->currentState = STATE_SCORES_LIST;
+                Game_SetSubState(game, STATE_SCORES_LIST);
                 return;
             }
         }

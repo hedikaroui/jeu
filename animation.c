@@ -1,24 +1,4 @@
-#include <stddef.h>
-#include <string.h>
-
-typedef enum {
-    MOVEMENT_WALK = 0,
-    MOVEMENT_RUN,
-    MOVEMENT_DANCE,
-    MOVEMENT_JUMP,
-    MOVEMENT_COUNT
-} MovementType;
-
-typedef struct {
-    const char *name;
-    const char *sprite_sheet;
-    int rows;
-    int cols;
-    int frame_duration_ms;
-    float speed_x;
-    float speed_y;
-    int loops;
-} AnimationMovement;
+#include "all_in_one.h"
 
 static const AnimationMovement kAnimationMovements[MOVEMENT_COUNT] = {
     [MOVEMENT_WALK] = {

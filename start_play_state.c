@@ -1,73 +1,40 @@
 #include "game.h"
-#include "assets_catalog.h"
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-
-typedef struct {
-    SDL_Texture *walk_tex;
-    SDL_Texture *walk_back_tex;
-    SDL_Texture *stop_tex;
-    SDL_Texture *coin_tex;
-    SDL_Texture *dance_tex;
-    SDL_Texture *wave_tex;
-    int walk_rows;
-    int walk_cols;
-    int walk_frame_w;
-    int walk_frame_h;
-    int walk_back_rows;
-    int walk_back_cols;
-    int walk_back_frame_w;
-    int walk_back_frame_h;
-    int dance_rows;
-    int dance_cols;
-    int dance_frame_w;
-    int dance_frame_h;
-    int wave_rows;
-    int wave_cols;
-    int wave_frame_w;
-    int wave_frame_h;
-    int frame_index;
-    int facing; /* 1 right/forward, -1 left/back */
-    int moving;
-    int idle_state; /* 0 none, 1 dance, 2 wave */
-    int idle_msg_index;
-    Uint32 move_hold_ms;
-    Uint32 last_input_tick;
-    Uint32 idle_msg_tick;
-    Uint32 last_anim_tick;
-    Mix_Chunk *dance_loop_sfx;
-    int dance_loop_channel;
-} StartPlayAnimation;
-
-typedef struct {
-    double x, y;
-    double vitesse;
-    double acceleration;
-    SDL_Rect position_acc;
-} StartPlayMover;
 
 static StartPlayAnimation startPlayAnim = {.dance_loop_channel = -1};
 static StartPlayMover startPlayMover = {0};
 static Uint32 startPlayIntroStart = 0;
 static SDL_Rect startPlayPlayerRect = {0, 0, 120, 120};
 static Uint32 startPlayLastTick = 0;
+static int startPlayJumping = 0;
+static int startPlayPendingJump = 0;
+static double startPlayJumpRelX = -50.0;
+static double startPlayJumpRelY = 0.0;
+static double startPlayJumpProgress = 0.0;
+static int startPlayJumpBaseX = 0;
+static int startPlayJumpBaseY = 0;
+static int startPlayJumpDir = 0;
+static Uint32 startPlayLastJumpDebugTick = 0;
 
 #define HARRY_SHEET_ROWS 5
 #define HARRY_SHEET_COLS 5
+#define STARTPLAY_JUMP_DURATION_MS 620.0
 #define STARTPLAY_IDLE_NONE 0
 #define STARTPLAY_IDLE_DANCE 1
 #define STARTPLAY_IDLE_WAVE 2
 #define STARTPLAY_IDLE_TRIGGER_MS 20000
-#define STARTPLAY_HOLD_MAX_MS 5000
-#define STARTPLAY_HOLD_FACTOR_DIV 2000.0
-#define STARTPLAY_HOLD_FACTOR_MAX 2.8
-#define STARTPLAY_BASE_ACCEL 1350.0
-#define STARTPLAY_FRICTION 0.90
-#define STARTPLAY_STOP_EPSILON 5.0
-#define STARTPLAY_BASE_MAX_SPEED 250.0
-#define STARTPLAY_MAX_SPEED_BONUS 260.0
+#define STARTPLAY_HOLD_MAX_MS 1200
+#define STARTPLAY_HOLD_FACTOR_DIV 2600.0
+#define STARTPLAY_HOLD_FACTOR_MAX 1.35
+#define STARTPLAY_BASE_ACCEL 420.0
+#define STARTPLAY_FRICTION 0.78
+#define STARTPLAY_STOP_EPSILON 3.0
+#define STARTPLAY_BASE_MAX_SPEED 95.0
+#define STARTPLAY_MAX_SPEED_BONUS 45.0
 #define STARTPLAY_BASE_Y_SPEED 4
 #define STARTPLAY_Y_SPEED_BONUS 5.0
 #define STARTPLAY_WALK_FRAME_BASE_MS 140
@@ -143,6 +110,78 @@ static void start_play_reset_mover(void) {
     startPlayAnim.last_input_tick = now;
     startPlayAnim.idle_msg_tick = now;
     startPlayAnim.last_anim_tick = now;
+    startPlayJumping = 0;
+    startPlayPendingJump = 0;
+    startPlayJumpRelX = -50.0;
+    startPlayJumpRelY = 0.0;
+    startPlayJumpProgress = 0.0;
+    startPlayJumpBaseX = startPlayPlayerRect.x;
+    startPlayJumpBaseY = startPlayPlayerRect.y;
+    startPlayJumpDir = 0;
+    startPlayLastJumpDebugTick = 0;
+}
+
+static void start_play_begin_jump(int dir, Uint32 now) {
+    if (startPlayJumping) return;
+    startPlayJumping = 1;
+    startPlayPendingJump = 0;
+    startPlayJumpRelX = -50.0;
+    startPlayJumpRelY = 0.0;
+    startPlayJumpProgress = 0.0;
+    startPlayJumpBaseX = startPlayPlayerRect.x;
+    startPlayJumpBaseY = startPlayPlayerRect.y;
+    startPlayJumpDir = dir;
+    if (dir != 0) startPlayAnim.facing = dir;
+    startPlayAnim.idle_state = STARTPLAY_IDLE_NONE;
+    startPlayAnim.moving = 0;
+    startPlayAnim.frame_index = 0;
+    startPlayAnim.last_anim_tick = now;
+    printf("[START_PLAY JUMP] start base=(%d,%d) dir=%d facing=%d\n",
+           startPlayJumpBaseX, startPlayJumpBaseY, startPlayJumpDir, startPlayAnim.facing);
+    fflush(stdout);
+}
+
+static void start_play_update_jump(Uint32 dt_ms, Uint32 now) {
+    double t;
+    double smooth_t;
+    int dir;
+
+    if (!startPlayJumping) return;
+
+    startPlayJumpProgress += (double)dt_ms / STARTPLAY_JUMP_DURATION_MS;
+    if (startPlayJumpProgress > 1.0) startPlayJumpProgress = 1.0;
+    t = startPlayJumpProgress;
+    smooth_t = t * t * (3.0 - 2.0 * t);
+    startPlayJumpRelX = -50.0 + (100.0 * smooth_t);
+    startPlayJumpRelY = (-0.04 * (startPlayJumpRelX * startPlayJumpRelX)) + 100.0;
+
+    dir = startPlayJumpDir;
+    startPlayPlayerRect.x = startPlayJumpBaseX + (int)lround((startPlayJumpRelX + 50.0) * dir);
+    startPlayPlayerRect.y = startPlayJumpBaseY - (int)lround(startPlayJumpRelY);
+
+    startPlayMover.x = (double)startPlayPlayerRect.x;
+    startPlayMover.y = (double)startPlayPlayerRect.y;
+    startPlayMover.position_acc = startPlayPlayerRect;
+
+    if (now - startPlayLastJumpDebugTick >= 60u) {
+        printf("[START_PLAY JUMP] relX=%.2f relY=%.2f pos=(%d,%d)\n",
+               startPlayJumpRelX, startPlayJumpRelY, startPlayPlayerRect.x, startPlayPlayerRect.y);
+        fflush(stdout);
+        startPlayLastJumpDebugTick = now;
+    }
+
+    if (startPlayJumpProgress >= 1.0) {
+        startPlayJumping = 0;
+        startPlayJumpRelX = -50.0;
+        startPlayJumpRelY = 0.0;
+        startPlayJumpProgress = 0.0;
+        startPlayJumpDir = 0;
+        startPlayPlayerRect.y = startPlayJumpBaseY;
+        startPlayMover.y = (double)startPlayJumpBaseY;
+        startPlayMover.position_acc = startPlayPlayerRect;
+        printf("[START_PLAY JUMP] end pos=(%d,%d)\n", startPlayPlayerRect.x, startPlayPlayerRect.y);
+        fflush(stdout);
+    }
 }
 
 static void start_play_move_mover(Uint32 dt_ms) {
@@ -204,8 +243,10 @@ int StartPlay_Charger(Game *game, SDL_Renderer *renderer) {
         startPlayAnim.dance_loop_channel = -1;
     }
 
-    if (!game->startHeartTex)
-        game->startHeartTex = IMG_LoadTexture(renderer, GAME_ASSETS.backgrounds.start_heart);
+    if (!game->startPlayer1LifeTex)
+        game->startPlayer1LifeTex = IMG_LoadTexture(renderer, "characters/first_player_icon_life.png");
+    if (!game->startPlayer2LifeTex)
+        game->startPlayer2LifeTex = IMG_LoadTexture(renderer, "characters/second_player_icon_life.png");
 
     if (!game->startTextTex) {
         TTF_Font *f = TTF_OpenFont(GAME_ASSETS.fonts.hello, 68);
@@ -235,8 +276,14 @@ int StartPlay_Charger(Game *game, SDL_Renderer *renderer) {
                               "spritesheet_characters/mr_harry_walk_cycle_transparent.png");
     start_play_reload_texture(renderer, &startPlayAnim.walk_back_tex,
                               "spritesheet_characters/mr_harry_walk_cycle_back_transparent.png");
+    start_play_reload_texture(renderer, &startPlayAnim.jump_tex,
+                              "spritesheet_characters/mr_harry_jump_transparent.png");
+    start_play_reload_texture(renderer, &startPlayAnim.jump_back_tex,
+                              "spritesheet_characters/mr_harry_jump_back_transparent.png");
     start_play_reload_texture(renderer, &startPlayAnim.stop_tex,
-                              "spritesheet_characters/mr_harry_stops.png");
+                              "spritesheet_characters/mr_harry_stand_up.png");
+    start_play_reload_texture(renderer, &startPlayAnim.stop_back_tex,
+                              "spritesheet_characters/mr_harry_stand_up_back.png");
     start_play_reload_texture(renderer, &startPlayAnim.coin_tex,
                               "buttons/coin.png");
     start_play_reload_texture(renderer, &startPlayAnim.dance_tex,
@@ -261,6 +308,18 @@ int StartPlay_Charger(Game *game, SDL_Renderer *renderer) {
     start_play_setup_sheet(startPlayAnim.walk_back_tex, HARRY_SHEET_ROWS, HARRY_SHEET_COLS,
                            &startPlayAnim.walk_back_rows, &startPlayAnim.walk_back_cols,
                            &startPlayAnim.walk_back_frame_w, &startPlayAnim.walk_back_frame_h);
+    start_play_setup_sheet(startPlayAnim.jump_tex, HARRY_SHEET_ROWS, HARRY_SHEET_COLS,
+                           &startPlayAnim.jump_rows, &startPlayAnim.jump_cols,
+                           &startPlayAnim.jump_frame_w, &startPlayAnim.jump_frame_h);
+    start_play_setup_sheet(startPlayAnim.jump_back_tex, HARRY_SHEET_ROWS, HARRY_SHEET_COLS,
+                           &startPlayAnim.jump_back_rows, &startPlayAnim.jump_back_cols,
+                           &startPlayAnim.jump_back_frame_w, &startPlayAnim.jump_back_frame_h);
+    start_play_setup_sheet(startPlayAnim.stop_tex, HARRY_SHEET_ROWS, HARRY_SHEET_COLS,
+                           &startPlayAnim.stop_rows, &startPlayAnim.stop_cols,
+                           &startPlayAnim.stop_frame_w, &startPlayAnim.stop_frame_h);
+    start_play_setup_sheet(startPlayAnim.stop_back_tex, HARRY_SHEET_ROWS, HARRY_SHEET_COLS,
+                           &startPlayAnim.stop_back_rows, &startPlayAnim.stop_back_cols,
+                           &startPlayAnim.stop_back_frame_w, &startPlayAnim.stop_back_frame_h);
     start_play_setup_sheet(startPlayAnim.dance_tex, HARRY_SHEET_ROWS, HARRY_SHEET_COLS,
                            &startPlayAnim.dance_rows, &startPlayAnim.dance_cols,
                            &startPlayAnim.dance_frame_w, &startPlayAnim.dance_frame_h);
@@ -299,18 +358,27 @@ void StartPlay_LectureEntree(Game *game) {
             game->running = 0;
             return;
         }
-        if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
-            if (startPlayAnim.dance_loop_channel >= 0) {
-                Mix_HaltChannel(startPlayAnim.dance_loop_channel);
-                startPlayAnim.dance_loop_channel = -1;
+        if (e.type == SDL_KEYDOWN) {
+            if (e.key.keysym.sym == SDLK_ESCAPE) {
+                if (startPlayAnim.dance_loop_channel >= 0) {
+                    Mix_HaltChannel(startPlayAnim.dance_loop_channel);
+                    startPlayAnim.dance_loop_channel = -1;
+                }
+                startPlayAnim.idle_state = STARTPLAY_IDLE_NONE;
+                game->startPlayLoaded = 0;
+                Game_SetSubState(game, STATE_MENU);
+                if (game->music) Mix_PlayMusic(game->music, -1);
+                startPlayIntroStart = 0;
+                startPlayLastTick = 0;
+                return;
             }
-            startPlayAnim.idle_state = STARTPLAY_IDLE_NONE;
-            game->startPlayLoaded = 0;
-            game->currentState = STATE_MENU;
-            if (game->music) Mix_PlayMusic(game->music, -1);
-            startPlayIntroStart = 0;
-            startPlayLastTick = 0;
-            return;
+            if (e.key.keysym.scancode == SDL_SCANCODE_SPACE ||
+                e.key.keysym.scancode == SDL_SCANCODE_UP ||
+                e.key.keysym.scancode == SDL_SCANCODE_W) {
+                startPlayPendingJump = 1;
+                printf("[START_PLAY INPUT] jump key pressed: %s\n", SDL_GetKeyName(e.key.keysym.sym));
+                fflush(stdout);
+            }
         }
     }
 
@@ -323,11 +391,21 @@ void StartPlay_LectureEntree(Game *game) {
     const Uint8 *keys = SDL_GetKeyboardState(NULL);
     int left_pressed = keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A];
     int right_pressed = keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D];
-    int up_pressed = keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W];
-    int down_pressed = keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S];
-    int has_move_input = left_pressed || right_pressed || up_pressed || down_pressed;
+    int jump_pressed = startPlayPendingJump ||
+                       keys[SDL_SCANCODE_SPACE] ||
+                       keys[SDL_SCANCODE_UP] ||
+                       keys[SDL_SCANCODE_W];
+    int has_move_input = left_pressed || right_pressed;
 
-    if (has_move_input) {
+    if (jump_pressed && !startPlayJumping) {
+        int jump_dir = 0;
+        if (left_pressed && !right_pressed) jump_dir = -1;
+        if (right_pressed && !left_pressed) jump_dir = 1;
+        start_play_begin_jump(jump_dir, now);
+    }
+    startPlayPendingJump = 0;
+
+    if (!startPlayJumping && has_move_input) {
         int was_idle = (startPlayAnim.idle_state != STARTPLAY_IDLE_NONE);
         if (startPlayAnim.move_hold_ms < STARTPLAY_HOLD_MAX_MS) {
             startPlayAnim.move_hold_ms += dt;
@@ -348,7 +426,10 @@ void StartPlay_LectureEntree(Game *game) {
     if (hold_factor > STARTPLAY_HOLD_FACTOR_MAX) hold_factor = STARTPLAY_HOLD_FACTOR_MAX;
     double accel = STARTPLAY_BASE_ACCEL * hold_factor;
 
-    if (left_pressed && !right_pressed) {
+    if (startPlayJumping) {
+        startPlayMover.acceleration = 0.0;
+        startPlayMover.vitesse = 0.0;
+    } else if (left_pressed && !right_pressed) {
         startPlayMover.acceleration = -accel;
         startPlayAnim.facing = -1;
     } else if (right_pressed && !left_pressed) {
@@ -360,7 +441,7 @@ void StartPlay_LectureEntree(Game *game) {
         if (fabs(startPlayMover.vitesse) < STARTPLAY_STOP_EPSILON) startPlayMover.vitesse = 0.0;
     }
 
-    start_play_move_mover(dt);
+    if (!startPlayJumping) start_play_move_mover(dt);
 
     {
         double max_speed = STARTPLAY_BASE_MAX_SPEED + hold_factor * STARTPLAY_MAX_SPEED_BONUS;
@@ -368,19 +449,20 @@ void StartPlay_LectureEntree(Game *game) {
         if (startPlayMover.vitesse < -max_speed) startPlayMover.vitesse = -max_speed;
     }
 
-    {
-        int speedY = STARTPLAY_BASE_Y_SPEED + (int)lround(STARTPLAY_Y_SPEED_BONUS * hold_factor);
-        if (up_pressed) startPlayMover.y -= speedY;
-        if (down_pressed) startPlayMover.y += speedY;
+    if (startPlayJumping) {
+        start_play_update_jump(dt, now);
+    } else {
+        /* Keep the character on a fixed horizontal line when not jumping. */
+        startPlayMover.y = (HEIGHT - 120) / 2.0 + 40.0;
+        startPlayMover.position_acc.y = (int)lround(startPlayMover.y);
+        startPlayPlayerRect.y = startPlayMover.position_acc.y;
     }
-    startPlayMover.position_acc.y = (int)lround(startPlayMover.y);
-    startPlayPlayerRect.y = startPlayMover.position_acc.y;
 
-    startPlayAnim.moving = has_move_input || fabs(startPlayMover.vitesse) > 8.0;
+    startPlayAnim.moving = !startPlayJumping && (has_move_input || fabs(startPlayMover.vitesse) > 8.0);
     if (startPlayMover.vitesse < -8.0) startPlayAnim.facing = -1;
     if (startPlayMover.vitesse > 8.0) startPlayAnim.facing = 1;
 
-    if (!has_move_input && fabs(startPlayMover.vitesse) < 4.0 &&
+    if (!startPlayJumping && !has_move_input && fabs(startPlayMover.vitesse) < 4.0 &&
         now - startPlayAnim.last_input_tick >= STARTPLAY_IDLE_TRIGGER_MS &&
         startPlayAnim.idle_state == STARTPLAY_IDLE_NONE) {
         startPlayAnim.idle_state = (rand() % 2 == 0) ? STARTPLAY_IDLE_DANCE : STARTPLAY_IDLE_WAVE;
@@ -413,7 +495,16 @@ void StartPlay_LectureEntree(Game *game) {
         return;
     }
 
-    if (startPlayAnim.moving) {
+    if (startPlayJumping) {
+        int rows = (startPlayAnim.facing < 0) ? startPlayAnim.jump_back_rows : startPlayAnim.jump_rows;
+        int cols = (startPlayAnim.facing < 0) ? startPlayAnim.jump_back_cols : startPlayAnim.jump_cols;
+        int frames = rows * cols;
+        if (frames < 1) frames = 1;
+        if (now - startPlayAnim.last_anim_tick >= 90u) {
+            startPlayAnim.frame_index = (startPlayAnim.frame_index + 1) % frames;
+            startPlayAnim.last_anim_tick = now;
+        }
+    } else if (startPlayAnim.moving) {
         int rows = (startPlayAnim.facing < 0) ? startPlayAnim.walk_back_rows : startPlayAnim.walk_rows;
         int cols = (startPlayAnim.facing < 0) ? startPlayAnim.walk_back_cols : startPlayAnim.walk_cols;
         int frames = rows * cols;
@@ -428,8 +519,18 @@ void StartPlay_LectureEntree(Game *game) {
             startPlayAnim.last_anim_tick = now;
         }
     } else {
-        startPlayAnim.frame_index = 0;
-        startPlayAnim.last_anim_tick = now;
+        int rows = (startPlayAnim.facing < 0 && startPlayAnim.stop_back_tex)
+            ? startPlayAnim.stop_back_rows
+            : startPlayAnim.stop_rows;
+        int cols = (startPlayAnim.facing < 0 && startPlayAnim.stop_back_tex)
+            ? startPlayAnim.stop_back_cols
+            : startPlayAnim.stop_cols;
+        int frames = rows * cols;
+        if (frames < 1) frames = 1;
+        if (now - startPlayAnim.last_anim_tick >= 140u) {
+            startPlayAnim.frame_index = (startPlayAnim.frame_index + 1) % frames;
+            startPlayAnim.last_anim_tick = now;
+        }
     }
 }
 
@@ -443,8 +544,16 @@ void StartPlay_Affichage(Game *game, SDL_Renderer *renderer) {
         SDL_Texture *active_sheet = NULL;
         int rows = 1, cols = 1;
         int frame_w = startPlayPlayerRect.w, frame_h = startPlayPlayerRect.h;
+        int reverse_sheet = 0;
 
-        if (startPlayAnim.idle_state == STARTPLAY_IDLE_DANCE) {
+        if (startPlayJumping) {
+            active_sheet = (startPlayAnim.facing < 0) ? startPlayAnim.jump_back_tex : startPlayAnim.jump_tex;
+            rows = (startPlayAnim.facing < 0) ? startPlayAnim.jump_back_rows : startPlayAnim.jump_rows;
+            cols = (startPlayAnim.facing < 0) ? startPlayAnim.jump_back_cols : startPlayAnim.jump_cols;
+            frame_w = (startPlayAnim.facing < 0) ? startPlayAnim.jump_back_frame_w : startPlayAnim.jump_frame_w;
+            frame_h = (startPlayAnim.facing < 0) ? startPlayAnim.jump_back_frame_h : startPlayAnim.jump_frame_h;
+            reverse_sheet = (startPlayAnim.facing < 0);
+        } else if (startPlayAnim.idle_state == STARTPLAY_IDLE_DANCE) {
             active_sheet = startPlayAnim.dance_tex;
             rows = startPlayAnim.dance_rows;
             cols = startPlayAnim.dance_cols;
@@ -456,14 +565,20 @@ void StartPlay_Affichage(Game *game, SDL_Renderer *renderer) {
             cols = startPlayAnim.wave_cols;
             frame_w = startPlayAnim.wave_frame_w;
             frame_h = startPlayAnim.wave_frame_h;
-        } else if (!startPlayAnim.moving && startPlayAnim.stop_tex) {
-            active_sheet = startPlayAnim.stop_tex;
-            rows = 1;
-            cols = 1;
-            if (SDL_QueryTexture(startPlayAnim.stop_tex, NULL, NULL, &frame_w, &frame_h) != 0 ||
-                frame_w <= 0 || frame_h <= 0) {
-                frame_w = startPlayPlayerRect.w;
-                frame_h = startPlayPlayerRect.h;
+        } else if (!startPlayAnim.moving && (startPlayAnim.stop_tex || startPlayAnim.stop_back_tex)) {
+            if (startPlayAnim.facing < 0 && startPlayAnim.stop_back_tex) {
+                active_sheet = startPlayAnim.stop_back_tex;
+                rows = startPlayAnim.stop_back_rows;
+                cols = startPlayAnim.stop_back_cols;
+                frame_w = startPlayAnim.stop_back_frame_w;
+                frame_h = startPlayAnim.stop_back_frame_h;
+                reverse_sheet = 1;
+            } else {
+                active_sheet = startPlayAnim.stop_tex;
+                rows = startPlayAnim.stop_rows;
+                cols = startPlayAnim.stop_cols;
+                frame_w = startPlayAnim.stop_frame_w;
+                frame_h = startPlayAnim.stop_frame_h;
             }
         } else {
             active_sheet = (startPlayAnim.facing < 0) ? startPlayAnim.walk_back_tex : startPlayAnim.walk_tex;
@@ -471,11 +586,13 @@ void StartPlay_Affichage(Game *game, SDL_Renderer *renderer) {
             cols = (startPlayAnim.facing < 0) ? startPlayAnim.walk_back_cols : startPlayAnim.walk_cols;
             frame_w = (startPlayAnim.facing < 0) ? startPlayAnim.walk_back_frame_w : startPlayAnim.walk_frame_w;
             frame_h = (startPlayAnim.facing < 0) ? startPlayAnim.walk_back_frame_h : startPlayAnim.walk_frame_h;
+            reverse_sheet = (startPlayAnim.facing < 0);
         }
 
         if (active_sheet && rows > 0 && cols > 0 && frame_w > 0 && frame_h > 0) {
             int frame_count = rows * cols;
             int draw_frame = startPlayAnim.frame_index % frame_count;
+            if (reverse_sheet) draw_frame = frame_count - 1 - draw_frame;
             int frame_col = draw_frame % cols;
             int frame_row = draw_frame / cols;
             SDL_Rect src = {
@@ -496,25 +613,34 @@ void StartPlay_Affichage(Game *game, SDL_Renderer *renderer) {
         }
     }
 
-    if (game->startHeartTex) {
-        int hearts = 10;
-        int size = 32;
-        int gap = 6;
+    {
+        int icon_w = 100;
+        int icon_h = 100;
         int x0 = 16;
         int y0 = 16;
-        for (int i = 0; i < hearts; i++) {
-            SDL_Rect r = {x0 + i * (size + gap), y0, size, size};
-            SDL_RenderCopy(renderer, game->startHeartTex, NULL, &r);
+        int icon_gap = 10;
+        int bottom_icons_y = y0;
+
+        if (game->startPlayer1LifeTex) {
+            SDL_Rect p1_life = {x0, y0, icon_w, icon_h};
+            SDL_RenderCopy(renderer, game->startPlayer1LifeTex, NULL, &p1_life);
+            bottom_icons_y = p1_life.y + p1_life.h;
+        }
+
+        if (game->startPlayer2LifeTex) {
+            SDL_Rect p2_life = {x0, bottom_icons_y + icon_gap, icon_w, icon_h};
+            SDL_RenderCopy(renderer, game->startPlayer2LifeTex, NULL, &p2_life);
+            bottom_icons_y = p2_life.y + p2_life.h;
         }
 
         if (startPlayAnim.coin_tex) {
             int coin_w = 42;
             int coin_h = 42;
-            int space_from_hearts = 14;
+            int space_from_icons = 14;
             int left_border_space = 18;
             SDL_Rect coin_base = {
                 left_border_space,
-                y0 + size + space_from_hearts,
+                bottom_icons_y + space_from_icons,
                 coin_w,
                 coin_h
             };
@@ -549,7 +675,10 @@ void StartPlay_MiseAJour(Game *game) {
 void StartPlay_Cleanup(void) {
     if (startPlayAnim.walk_tex) SDL_DestroyTexture(startPlayAnim.walk_tex);
     if (startPlayAnim.walk_back_tex) SDL_DestroyTexture(startPlayAnim.walk_back_tex);
+    if (startPlayAnim.jump_tex) SDL_DestroyTexture(startPlayAnim.jump_tex);
+    if (startPlayAnim.jump_back_tex) SDL_DestroyTexture(startPlayAnim.jump_back_tex);
     if (startPlayAnim.stop_tex) SDL_DestroyTexture(startPlayAnim.stop_tex);
+    if (startPlayAnim.stop_back_tex) SDL_DestroyTexture(startPlayAnim.stop_back_tex);
     if (startPlayAnim.coin_tex) SDL_DestroyTexture(startPlayAnim.coin_tex);
     if (startPlayAnim.dance_tex) SDL_DestroyTexture(startPlayAnim.dance_tex);
     if (startPlayAnim.wave_tex) SDL_DestroyTexture(startPlayAnim.wave_tex);
