@@ -1,4 +1,5 @@
 #include "game.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -27,11 +28,21 @@ static char ps_name2[256];
 static int ps_cursor1 = 0, ps_cursor2 = 0;
 static Uint32 ps_control_warn_until = 0;
 static SDL_Texture *ps_dance_tex = NULL;
+static SDL_Texture *ps_settings_p1_tex = NULL;
+static SDL_Texture *ps_settings_p2_tex = NULL;
+static SDL_Texture *ps_not_ready_tex = NULL;
+static SDL_Texture *ps_ready_tex = NULL;
+static SDL_Texture *ps_arrow_right_tex = NULL;
 static int ps_dance_rows = 5, ps_dance_cols = 5;
 static int ps_dance_frame_w = 0, ps_dance_frame_h = 0;
 static int ps_dance_frame = 0;
 static Uint32 ps_dance_last_tick = 0;
 static int ps_hover_player1_photo = 0;
+static SDL_Rect ps_settings_rect;
+static SDL_Rect ps_not_ready_rect;
+static SDL_Rect ps_mono_arrow_rect;
+static int ps_hover_not_ready = 0;
+static int ps_mono_character_index = 0; /* 0 -> first player, 1 -> second player */
 
 static int ps_point_in_rect(SDL_Rect r, int x, int y) {
     return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
@@ -99,6 +110,16 @@ static void ps_draw_center_text(SDL_Renderer *renderer, TTF_Font *font, const ch
     SDL_FreeSurface(surf);
 }
 
+static void ps_draw_filled_circle(SDL_Renderer *renderer, int cx, int cy, int radius,
+                                  Uint8 r, Uint8 g, Uint8 b, Uint8 a) {
+    if (!renderer || radius <= 0) return;
+    SDL_SetRenderDrawColor(renderer, r, g, b, a);
+    for (int dy = -radius; dy <= radius; dy++) {
+        int x_extent = (int)(sqrt((double)(radius * radius - dy * dy)));
+        SDL_RenderDrawLine(renderer, cx - x_extent, cy + dy, cx + x_extent, cy + dy);
+    }
+}
+
 static void ps_handle_text_input(char *buf, int *cursor_pos, SDL_Keycode key) {
     int len = (int)strlen(buf);
     if (key == SDLK_BACKSPACE && *cursor_pos > 0) {
@@ -115,6 +136,127 @@ static void ps_handle_text_input(char *buf, int *cursor_pos, SDL_Keycode key) {
     } else if (key == SDLK_END) {
         *cursor_pos = len;
     }
+}
+
+static int ps_player_count(const Game *game) {
+    return (game && game->player_mode == 1) ? 1 : 2;
+}
+
+static void ps_layout_controls_for_input(int player, SDL_Rect input) {
+    int iconW = 96;
+    int iconH = 74;
+    int gap = 12;
+    int y = input.y + input.h + 16;
+    int totalW = iconW * 3 + (gap * 2);
+    int startX = input.x + (input.w - totalW) / 2;
+
+    ps_controls[player][0] = (SDL_Rect){startX, y, iconW, iconH};
+    ps_controls[player][1] = (SDL_Rect){startX + iconW + gap, y, iconW, iconH};
+    ps_controls[player][2] = (SDL_Rect){startX + (iconW + gap) * 2, y, iconW, iconH};
+}
+
+static void ps_layout_player_config(const Game *game) {
+    if (ps_player_count(game) == 1) {
+        int panel_margin = 45;
+        int right_panel_w = 500;
+        int settings_h = 330;
+        int icon_w = 108;
+        int icon_h = 82;
+        int icon_gap = 18;
+        int controls_total_w = icon_w * 3 + icon_gap * 2;
+        int controls_start_x = (WIDTH - right_panel_w - panel_margin) + (right_panel_w - controls_total_w) / 2;
+
+        ps_p1_frame = (SDL_Rect){70, 100, 360, 300};
+        ps_p2_frame = (SDL_Rect){-1000, 80, 360, 300};
+        ps_j1_btn = (SDL_Rect){-1000, ps_p1_frame.y - 52, 140, 44};
+        ps_j2_btn = (SDL_Rect){-1000, ps_p2_frame.y - 52, 140, 44};
+        ps_input1 = (SDL_Rect){ps_p1_frame.x + (ps_p1_frame.w - 360) / 2, ps_p1_frame.y + ps_p1_frame.h + 28, 360, 56};
+        ps_input2 = (SDL_Rect){-1000, 410, 360, 56};
+        ps_settings_rect = (SDL_Rect){WIDTH - right_panel_w - panel_margin, 70, right_panel_w, settings_h};
+        ps_not_ready_rect = (SDL_Rect){WIDTH - 220, HEIGHT - 70, 200, 50};
+        ps_controls[0][0] = (SDL_Rect){controls_start_x, ps_settings_rect.y + ps_settings_rect.h + 22, icon_w, icon_h};
+        ps_controls[0][1] = (SDL_Rect){controls_start_x + icon_w + icon_gap, ps_settings_rect.y + ps_settings_rect.h + 22, icon_w, icon_h};
+        ps_controls[0][2] = (SDL_Rect){controls_start_x + (icon_w + icon_gap) * 2, ps_settings_rect.y + ps_settings_rect.h + 22, icon_w, icon_h};
+        ps_controls[1][0] = (SDL_Rect){-1000, -1000, 96, 74};
+        ps_controls[1][1] = (SDL_Rect){-1000, -1000, 96, 74};
+        ps_controls[1][2] = (SDL_Rect){-1000, -1000, 96, 74};
+    } else {
+        ps_p1_frame = (SDL_Rect){40, 80, 360, 300};
+        ps_p2_frame = (SDL_Rect){WIDTH - 400, 80, 360, 300};
+        ps_j1_btn = (SDL_Rect){ps_p1_frame.x + (ps_p1_frame.w - 140) / 2, ps_p1_frame.y - 52, 140, 44};
+        ps_j2_btn = (SDL_Rect){ps_p2_frame.x + (ps_p2_frame.w - 140) / 2, ps_p2_frame.y - 52, 140, 44};
+        ps_input1 = (SDL_Rect){40, 410, 360, 56};
+        ps_input2 = (SDL_Rect){WIDTH - 400, 410, 360, 56};
+        ps_settings_rect = (SDL_Rect){-1000, -1000, 0, 0};
+        ps_not_ready_rect = (SDL_Rect){-1000, -1000, 0, 0};
+        ps_layout_controls_for_input(0, ps_input1);
+        ps_layout_controls_for_input(1, ps_input2);
+    }
+
+    ps_score_btn = (SDL_Rect){(WIDTH - 360) / 2, HEIGHT - 100, 360, 76};
+    ps_player1_photo_rect = (SDL_Rect){ps_p1_frame.x + 18, ps_p1_frame.y + 40, ps_p1_frame.w - 36, ps_p1_frame.h - 12};
+}
+
+static void ps_clear_config_hover(void) {
+    ps_hover_player1_photo = 0;
+    ps_hover_not_ready = 0;
+    ps_hover_score = 0;
+    ps_last_hover_score = 0;
+    for (int p = 0; p < 2; p++) {
+        for (int c = 0; c < 3; c++) {
+            ps_hover_controls[p][c] = 0;
+            ps_last_hover_controls[p][c] = 0;
+        }
+    }
+}
+
+static void ps_commit_selection(Game *game, int player_count) {
+    if (!game) return;
+
+    game->startPlayLoaded = 0;
+    Game_ResetRuntime(game);
+
+    if (player_count == 2) {
+        game->solo_selected_player = 0;
+    } else {
+        game->solo_selected_player = (ps_mono_character_index == 1) ? 1 : 0;
+    }
+
+    strncpy(game->player1_name, ps_name1, sizeof(game->player1_name) - 1);
+    game->player1_name[sizeof(game->player1_name) - 1] = '\0';
+    if (strlen(game->player1_name) == 0) {
+        strcpy(game->player1_name, (player_count == 1 && game->solo_selected_player == 1) ? "Player2" : "Player1");
+    }
+
+    if (player_count == 2) {
+        strncpy(game->player2_name, ps_name2, sizeof(game->player2_name) - 1);
+        game->player2_name[sizeof(game->player2_name) - 1] = '\0';
+        if (strlen(game->player2_name) == 0) strcpy(game->player2_name, "Player2");
+        game->solo_selected_player = 0;
+    } else {
+        game->player2_name[0] = '\0';
+    }
+}
+
+static void ps_enter_player_config(Game *game, int player_mode) {
+    game->player_mode = player_mode;
+    ps_layout_player_config(game);
+    ps_clear_config_hover();
+    ps_focus_field = 0;
+    ps_control_warn_until = 0;
+    ps_mono_arrow_rect = (SDL_Rect){-1000, -1000, 0, 0};
+    SDL_StopTextInput();
+
+    if (player_mode == 1) {
+        ps_mono_character_index = 0;
+        ps_name1[0] = '\0';
+        ps_cursor1 = 0;
+        ps_name2[0] = '\0';
+        ps_cursor2 = 0;
+        ps_selected_controls[1] = -1;
+    }
+
+    Game_SetSubState(game, STATE_PLAYER_CONFIG);
 }
 
 int PlayerSelect_Charger(Game *game, SDL_Renderer *renderer) {
@@ -153,15 +295,15 @@ int PlayerSelect_Charger(Game *game, SDL_Renderer *renderer) {
     if (!game->psJ2Tex)
         game->psJ2Tex = IMG_LoadTexture(renderer, SCORE_BUTTON_HOVER);
     if (!game->psKeyboardTex)
-        game->psKeyboardTex = load_texture_first(renderer, CHAR_KEYBOARD_NORMAL_1, CHAR_KEYBOARD_NORMAL_2, CHAR_KEYBOARD_NORMAL_3);
+        game->psKeyboardTex = load_texture_first(renderer, "buttons/keyboard.png", CHAR_KEYBOARD_NORMAL_1, CHAR_KEYBOARD_NORMAL_3);
     if (!game->psKeyboardHoverTex)
         game->psKeyboardHoverTex = IMG_LoadTexture(renderer, CHAR_KEYBOARD_HOVER);
     if (!game->psManetteTex)
-        game->psManetteTex = load_texture_first(renderer, CHAR_MANETTE_NORMAL_1, CHAR_MANETTE_NORMAL_2, CHAR_MANETTE_NORMAL_3);
+        game->psManetteTex = load_texture_first(renderer, "buttons/manette.png", CHAR_MANETTE_NORMAL_1, CHAR_MANETTE_NORMAL_3);
     if (!game->psManetteHoverTex)
         game->psManetteHoverTex = IMG_LoadTexture(renderer, CHAR_MANETTE_HOVER);
     if (!game->psSourisTex)
-        game->psSourisTex = load_texture_first(renderer, CHAR_SOURIS_NORMAL_1, CHAR_SOURIS_NORMAL_2, CHAR_SOURIS_NORMAL_3);
+        game->psSourisTex = load_texture_first(renderer, "buttons/souris.png", CHAR_SOURIS_NORMAL_1, CHAR_SOURIS_NORMAL_3);
     if (!game->psSourisHoverTex)
         game->psSourisHoverTex = IMG_LoadTexture(renderer, CHAR_SOURIS_HOVER);
     if (!game->psScoreBtnTex)
@@ -185,39 +327,32 @@ int PlayerSelect_Charger(Game *game, SDL_Renderer *renderer) {
         }
     }
     if (!game->psNamePlayer1Tex)
-        game->psNamePlayer1Tex = IMG_LoadTexture(renderer, "buttons/harry_name_pixels.png");
+        game->psNamePlayer1Tex = load_texture_first(renderer, "buttons/mr_harry_name.png", "buttons/harry_name_pixels.png", NULL);
     if (!game->psNamePlayer2Tex)
         game->psNamePlayer2Tex = IMG_LoadTexture(renderer, "buttons/marvin_name_pixel_no_bg.png");
     if (!game->psHelpIconTex)
         game->psHelpIconTex = IMG_LoadTexture(renderer, "buttons/help_icon.png");
     if (!game->psHelpButtonTex)
         game->psHelpButtonTex = IMG_LoadTexture(renderer, "buttons/help_button.png");
+    if (!ps_settings_p1_tex)
+        ps_settings_p1_tex = load_texture_first(renderer,
+                                                "buttons/remake_player_stats_mr_harry.png",
+                                                "buttons/try.jpg",
+                                                NULL);
+    if (!ps_settings_p2_tex)
+        ps_settings_p2_tex = load_texture_first(renderer,
+                                                "buttons/remake_stats_mr_marvin.png",
+                                                "buttons/remake_player_stats_mr_marvin.png",
+                                                "buttons/try.jpg");
+    if (!ps_not_ready_tex)
+        ps_not_ready_tex = IMG_LoadTexture(renderer, "buttons/not_ready_button.png");
+    if (!ps_ready_tex)
+        ps_ready_tex = load_texture_first(renderer, "buttons/ready.png", "buttons/ready_button.png", NULL);
+    if (!ps_arrow_right_tex)
+        ps_arrow_right_tex = load_texture_first(renderer, "buttons/arrow right.jpg", "buttons/arrow_right.jpg", NULL);
 
-    ps_p1_frame = (SDL_Rect){40, 80, 360, 300};
-    ps_p2_frame = (SDL_Rect){WIDTH - 400, 80, 360, 300};
     ps_help_top_right_rect = (SDL_Rect){WIDTH - 70, 18, 48, 48};
-    ps_j1_btn = (SDL_Rect){ps_p1_frame.x + (ps_p1_frame.w - 140) / 2, ps_p1_frame.y - 52, 140, 44};
-    ps_j2_btn = (SDL_Rect){ps_p2_frame.x + (ps_p2_frame.w - 140) / 2, ps_p2_frame.y - 52, 140, 44};
-    ps_input1 = (SDL_Rect){40, 410, 360, 56};
-    ps_input2 = (SDL_Rect){WIDTH - 400, 410, 360, 56};
-    {
-        int iconW = 96;
-        int iconH = 74;
-        int gap = 12;
-        int y = ps_input1.y + ps_input1.h + 16;
-        int totalW = iconW * 3 + (gap * 2);
-
-        int p1StartX = ps_input1.x + (ps_input1.w - totalW) / 2;
-        int p2StartX = ps_input2.x + (ps_input2.w - totalW) / 2;
-
-        ps_controls[0][0] = (SDL_Rect){p1StartX, y, iconW, iconH};
-        ps_controls[0][1] = (SDL_Rect){p1StartX + iconW + gap, y, iconW, iconH};
-        ps_controls[0][2] = (SDL_Rect){p1StartX + (iconW + gap) * 2, y, iconW, iconH};
-        ps_controls[1][0] = (SDL_Rect){p2StartX, y, iconW, iconH};
-        ps_controls[1][1] = (SDL_Rect){p2StartX + iconW + gap, y, iconW, iconH};
-        ps_controls[1][2] = (SDL_Rect){p2StartX + (iconW + gap) * 2, y, iconW, iconH};
-    }
-    ps_score_btn = (SDL_Rect){(WIDTH - 360) / 2, HEIGHT - 100, 360, 76};
+    ps_layout_player_config(game);
     {
         int mode_w = 430;
         int mode_h = 210;
@@ -253,7 +388,6 @@ int PlayerSelect_Charger(Game *game, SDL_Renderer *renderer) {
     ps_last_hover_mode_mono = 0;
     ps_last_hover_mode_multi = 0;
     ps_control_warn_until = 0;
-    ps_player1_photo_rect = (SDL_Rect){ps_p1_frame.x + 18, ps_p1_frame.y + 40, ps_p1_frame.w - 36, ps_p1_frame.h - 12};
     ps_hover_player1_photo = 0;
     ps_dance_frame = 0;
     ps_dance_last_tick = SDL_GetTicks();
@@ -296,15 +430,13 @@ void PlayerSelect_LectureEntree(Game *game) {
                     return;
                 }
                 if (sym == SDLK_1 || sym == SDLK_KP_1) {
-                    game->player_mode = 1;
                     if (game->click) Mix_PlayChannel(-1, game->click, 0);
-                    Game_SetSubState(game, STATE_PLAYER_CONFIG);
+                    ps_enter_player_config(game, 1);
                     return;
                 }
                 if (sym == SDLK_2 || sym == SDLK_KP_2) {
-                    game->player_mode = 2;
                     if (game->click) Mix_PlayChannel(-1, game->click, 0);
-                    Game_SetSubState(game, STATE_PLAYER_CONFIG);
+                    ps_enter_player_config(game, 2);
                     return;
                 }
             }
@@ -313,15 +445,13 @@ void PlayerSelect_LectureEntree(Game *game) {
                 int mx = e.button.x;
                 int my = e.button.y;
                 if (ps_point_in_rect(ps_mode_mono_btn, mx, my)) {
-                    game->player_mode = 1;
                     if (game->click) Mix_PlayChannel(-1, game->click, 0);
-                    Game_SetSubState(game, STATE_PLAYER_CONFIG);
+                    ps_enter_player_config(game, 1);
                     return;
                 }
                 if (ps_point_in_rect(ps_mode_multi_btn, mx, my)) {
-                    game->player_mode = 2;
                     if (game->click) Mix_PlayChannel(-1, game->click, 0);
-                    Game_SetSubState(game, STATE_PLAYER_CONFIG);
+                    ps_enter_player_config(game, 2);
                     return;
                 }
             }
@@ -330,6 +460,8 @@ void PlayerSelect_LectureEntree(Game *game) {
     }
 
     while (SDL_PollEvent(&e)) {
+        int player_count = ps_player_count(game);
+
         if (e.type == SDL_QUIT) {
             game->running = 0;
             return;
@@ -339,15 +471,16 @@ void PlayerSelect_LectureEntree(Game *game) {
             int mx = e.motion.x;
             int my = e.motion.y;
             ps_hover_player1_photo = ps_point_in_rect(ps_player1_photo_rect, mx, my);
+            ps_hover_not_ready = (player_count == 1) && ps_point_in_rect(ps_not_ready_rect, mx, my);
             for (int p = 0; p < 2; p++) {
                 for (int c = 0; c < 3; c++) {
-                    ps_hover_controls[p][c] = ps_point_in_rect(ps_controls[p][c], mx, my);
+                    ps_hover_controls[p][c] = (p < player_count) && ps_point_in_rect(ps_controls[p][c], mx, my);
                 }
             }
-            ps_hover_score = ps_point_in_rect(ps_score_btn, mx, my);
+            ps_hover_score = (player_count == 2) && ps_point_in_rect(ps_score_btn, mx, my);
 
             int hovered_new_control = 0;
-            for (int p = 0; p < 2 && !hovered_new_control; p++) {
+            for (int p = 0; p < player_count && !hovered_new_control; p++) {
                 for (int c = 0; c < 3; c++) {
                     if (ps_hover_controls[p][c] && !ps_last_hover_controls[p][c]) {
                         hovered_new_control = 1;
@@ -376,8 +509,7 @@ void PlayerSelect_LectureEntree(Game *game) {
                     ps_focus_field = 0;
                     SDL_StopTextInput();
                 } else {
-                    Game_SetSubState(game, STATE_MENU);
-                    if (game->music) Mix_PlayMusic(game->music, -1);
+                    Game_SetSubState(game, STATE_PLAYER);
                 }
                 return;
             }
@@ -400,32 +532,34 @@ void PlayerSelect_LectureEntree(Game *game) {
             }
 
             if (sym == SDLK_TAB) {
-                ps_focus_field = (ps_focus_field == 1) ? 2 : 1;
+                ps_focus_field = (player_count == 1 || ps_focus_field == 2) ? 1 : 2;
                 SDL_StartTextInput();
             }
 
             if (sym == SDLK_RETURN) {
-                if (ps_selected_controls[0] < 0 || ps_selected_controls[1] < 0) {
+                if (ps_selected_controls[0] < 0 || (player_count == 2 && ps_selected_controls[1] < 0)) {
                     ps_control_warn_until = SDL_GetTicks() + 2000;
                     if (game->click) Mix_PlayChannel(-1, game->click, 0);
                     continue;
                 }
-                strncpy(game->player1_name, ps_name1, sizeof(game->player1_name) - 1);
-                strncpy(game->player2_name, ps_name2, sizeof(game->player2_name) - 1);
-                game->player1_name[sizeof(game->player1_name) - 1] = '\0';
-                game->player2_name[sizeof(game->player2_name) - 1] = '\0';
-                if (strlen(game->player1_name) == 0) strcpy(game->player1_name, "Player1");
-                if (strlen(game->player2_name) == 0) strcpy(game->player2_name, "Player2");
+                ps_commit_selection(game, player_count);
                 ps_focus_field = 0;
                 SDL_StopTextInput();
-                printf("Joueur 1: %s | Joueur 2: %s\n", game->player1_name, game->player2_name);
+                if (player_count == 2) {
+                    printf("Joueur 1: %s | Joueur 2: %s\n", game->player1_name, game->player2_name);
+                } else {
+                    printf("Joueur 1: %s\n", game->player1_name);
+                }
                 Game_ResetRuntime(game);
-                Game_SetSubState(game, STATE_GAME);
+                if (player_count == 2)
+                    Game_SetSubState(game, STATE_DISPLAY_CHOICE);
+                else
+                    Game_SetSubState(game, STATE_SCORES_INPUT);
                 return;
             }
 
             if (ps_focus_field == 1) ps_handle_text_input(ps_name1, &ps_cursor1, sym);
-            if (ps_focus_field == 2) ps_handle_text_input(ps_name2, &ps_cursor2, sym);
+            if (player_count == 2 && ps_focus_field == 2) ps_handle_text_input(ps_name2, &ps_cursor2, sym);
         }
 
         if (e.type == SDL_TEXTINPUT) {
@@ -435,7 +569,7 @@ void PlayerSelect_LectureEntree(Game *game) {
                 buf = ps_name1;
                 cursor = &ps_cursor1;
             }
-            if (ps_focus_field == 2) {
+            if (player_count == 2 && ps_focus_field == 2) {
                 buf = ps_name2;
                 cursor = &ps_cursor2;
             }
@@ -456,7 +590,7 @@ void PlayerSelect_LectureEntree(Game *game) {
             if (ps_point_in_rect(ps_input1, mx, my)) {
                 ps_focus_field = 1;
                 SDL_StartTextInput();
-            } else if (ps_point_in_rect(ps_input2, mx, my)) {
+            } else if (player_count == 2 && ps_point_in_rect(ps_input2, mx, my)) {
                 ps_focus_field = 2;
                 SDL_StartTextInput();
             } else {
@@ -464,8 +598,14 @@ void PlayerSelect_LectureEntree(Game *game) {
                 SDL_StopTextInput();
             }
 
+            if (player_count == 1 && ps_point_in_rect(ps_mono_arrow_rect, mx, my)) {
+                ps_mono_character_index = (ps_mono_character_index + 1) % 2;
+                if (game->click) Mix_PlayChannel(-1, game->click, 0);
+                continue;
+            }
+
             int picked_control = 0;
-            for (int p = 0; p < 2 && !picked_control; p++) {
+            for (int p = 0; p < player_count && !picked_control; p++) {
                 for (int c = 0; c < 3; c++) {
                     if (ps_point_in_rect(ps_controls[p][c], mx, my)) {
                         ps_selected_controls[p] = c;
@@ -478,9 +618,16 @@ void PlayerSelect_LectureEntree(Game *game) {
                 if (game->click) Mix_PlayChannel(-1, game->click, 0);
                 continue;
             }
-            if (ps_point_in_rect(ps_score_btn, mx, my)) {
+            if (player_count == 1 && ps_point_in_rect(ps_not_ready_rect, mx, my)) {
                 if (game->click) Mix_PlayChannel(-1, game->click, 0);
+                ps_commit_selection(game, player_count);
                 Game_SetSubState(game, STATE_SCORES_INPUT);
+                return;
+            }
+            if (player_count == 2 && ps_point_in_rect(ps_score_btn, mx, my)) {
+                if (game->click) Mix_PlayChannel(-1, game->click, 0);
+                ps_commit_selection(game, player_count);
+                Game_SetSubState(game, STATE_DISPLAY_CHOICE);
                 return;
             }
         }
@@ -499,6 +646,7 @@ void PlayerSelect_Affichage(Game *game, SDL_Renderer *renderer) {
     TTF_Font *font = game->font;
     SDL_Color white = {255, 255, 255, 255};
     SDL_Color muted = {180, 180, 180, 255};
+    int player_count = ps_player_count(game);
 
     if (game->currentSubState == STATE_PLAYER) {
         if (game->psHelpButtonTex) {
@@ -522,34 +670,59 @@ void PlayerSelect_Affichage(Game *game, SDL_Renderer *renderer) {
     if (game->psHelpButtonTex) {
         SDL_RenderCopy(renderer, game->psHelpButtonTex, NULL, &ps_help_top_right_rect);
     }
+    ps_mono_arrow_rect = (SDL_Rect){-1000, -1000, 0, 0};
 
-    {
+    if (player_count == 2) {
         SDL_Rect name1 = {ps_p1_frame.x + 10, ps_p1_frame.y - 16, ps_p1_frame.w - 20, 84};
         SDL_Rect name2 = {ps_p2_frame.x + 10, ps_p2_frame.y - 16, ps_p2_frame.w - 20, 84};
         if (game->psNamePlayer1Tex) ps_draw_texture_in_rect(renderer, game->psNamePlayer1Tex, name1);
         if (game->psNamePlayer2Tex) ps_draw_texture_in_rect(renderer, game->psNamePlayer2Tex, name2);
     }
 
-    if (game->player1Tex) {
-        SDL_Rect c1 = {ps_p1_frame.x + 18, ps_p1_frame.y + 40, ps_p1_frame.w - 36, ps_p1_frame.h - 12};
-        ps_player1_photo_rect = c1;
-        if (ps_hover_player1_photo && ps_dance_tex && ps_dance_frame_w > 0 && ps_dance_frame_h > 0) {
-            SDL_Rect src = {
-                (ps_dance_frame % ps_dance_cols) * ps_dance_frame_w,
-                (ps_dance_frame / ps_dance_cols) * ps_dance_frame_h,
-                ps_dance_frame_w,
-                ps_dance_frame_h
-            };
-            SDL_RenderCopy(renderer, ps_dance_tex, &src, &c1);
-        } else {
-            SDL_RenderCopy(renderer, game->player1Tex, NULL, &c1);
+    {
+        SDL_Texture *mono_or_p1_tex = game->player1Tex;
+        if (player_count == 1 && ps_mono_character_index == 1 && game->player2Tex) {
+            mono_or_p1_tex = game->player2Tex;
         }
-        if (game->psHelpIconTex) {
-            SDL_Rect help_on_p1 = {c1.x + c1.w - 44, c1.y + 6, 38, 38};
-            SDL_RenderCopy(renderer, game->psHelpIconTex, NULL, &help_on_p1);
+        if (mono_or_p1_tex) {
+            SDL_Rect c1 = (player_count == 1)
+                ? (SDL_Rect){ps_p1_frame.x + 30, ps_p1_frame.y + 14, ps_p1_frame.w - 80, ps_p1_frame.h - 20}
+                : (SDL_Rect){ps_p1_frame.x + 18, ps_p1_frame.y + 40, ps_p1_frame.w - 36, ps_p1_frame.h - 12};
+            ps_player1_photo_rect = c1;
+            if (ps_hover_player1_photo &&
+                (player_count == 2 || ps_mono_character_index == 0) &&
+                ps_dance_tex && ps_dance_frame_w > 0 && ps_dance_frame_h > 0) {
+                SDL_Rect src = {
+                    (ps_dance_frame % ps_dance_cols) * ps_dance_frame_w,
+                    (ps_dance_frame / ps_dance_cols) * ps_dance_frame_h,
+                    ps_dance_frame_w,
+                    ps_dance_frame_h
+                };
+                SDL_RenderCopy(renderer, ps_dance_tex, &src, &c1);
+            } else {
+                SDL_RenderCopy(renderer, mono_or_p1_tex, NULL, &c1);
+            }
+            if (game->psHelpIconTex) {
+                SDL_Rect help_on_p1 = {c1.x + c1.w - 44, c1.y + 6, 38, 38};
+                SDL_RenderCopy(renderer, game->psHelpIconTex, NULL, &help_on_p1);
+            }
+            if (player_count == 1 && ps_arrow_right_tex) {
+                ps_mono_arrow_rect = (SDL_Rect){c1.x + c1.w + 18, c1.y + (c1.h - 86) / 2, 130, 86};
+                ps_draw_texture_in_rect(renderer, ps_arrow_right_tex, ps_mono_arrow_rect);
+            }
+            if (player_count == 1) {
+                SDL_Texture *mono_name_tex = (ps_mono_character_index == 1 && game->psNamePlayer2Tex)
+                    ? game->psNamePlayer2Tex
+                    : game->psNamePlayer1Tex;
+                SDL_Rect mono_name_top = {c1.x - 50, c1.y - 108, c1.w + 100, 96};
+                if (mono_name_tex) {
+                    ps_draw_texture_in_rect(renderer, mono_name_tex, mono_name_top);
+                }
+            }
         }
     }
-    if (game->player2Tex) {
+
+    if (player_count == 2 && game->player2Tex) {
         SDL_Rect c2 = {ps_p2_frame.x + 18, ps_p2_frame.y + 40, ps_p2_frame.w - 36, ps_p2_frame.h - 12};
         SDL_RenderCopy(renderer, game->player2Tex, NULL, &c2);
         if (game->psHelpIconTex) {
@@ -558,10 +731,30 @@ void PlayerSelect_Affichage(Game *game, SDL_Renderer *renderer) {
         }
     }
 
-    ps_draw_text(renderer, font, strlen(ps_name1) ? ps_name1 : "Player 1 name...", strlen(ps_name1) ? white : muted, ps_input1.x + 8, ps_input1.y + 14);
-    ps_draw_text(renderer, font, strlen(ps_name2) ? ps_name2 : "Player 2 name...", strlen(ps_name2) ? white : muted, ps_input2.x + 8, ps_input2.y + 14);
+    {
+        const char *default_name = "Player 1 name...";
+        const char *display_name = strlen(ps_name1) ? ps_name1 : default_name;
+        SDL_Color name_color = strlen(ps_name1) ? white : muted;
+        ps_draw_text(renderer, font, display_name, name_color, ps_input1.x + 8, ps_input1.y + 14);
+    }
+    if (player_count == 2) {
+        ps_draw_text(renderer, font, strlen(ps_name2) ? ps_name2 : "Player 2 name...", strlen(ps_name2) ? white : muted, ps_input2.x + 8, ps_input2.y + 14);
+    }
 
-    for (int p = 0; p < 2; p++) {
+    if (player_count == 1) {
+        SDL_Texture *mono_settings_tex = (ps_mono_character_index == 1 && ps_settings_p2_tex)
+            ? ps_settings_p2_tex
+            : ps_settings_p1_tex;
+        if (mono_settings_tex) ps_draw_texture_in_rect(renderer, mono_settings_tex, ps_settings_rect);
+        else ps_draw_center_text(renderer, font, "SETTINGS", white, ps_settings_rect);
+
+        if (ps_not_ready_tex) {
+            SDL_Texture *ready_state_tex = (ps_hover_not_ready && ps_ready_tex) ? ps_ready_tex : ps_not_ready_tex;
+            ps_draw_texture_in_rect(renderer, ready_state_tex, ps_not_ready_rect);
+        }
+    }
+
+    for (int p = 0; p < player_count; p++) {
         for (int c = 0; c < 3; c++) {
             SDL_Rect r = ps_controls[p][c];
             int active = ps_hover_controls[p][c] || (ps_selected_controls[p] == c);
@@ -580,10 +773,13 @@ void PlayerSelect_Affichage(Game *game, SDL_Renderer *renderer) {
 
     if (SDL_GetTicks() < ps_control_warn_until) {
         SDL_Rect hint = {(WIDTH - 760) / 2, HEIGHT - 150, 760, 34};
-        ps_draw_center_text(renderer, font, "Choose keyboard, controller or mouse for each player first", white, hint);
+        const char *message = (player_count == 1)
+            ? "Choose keyboard, controller or mouse for your player first"
+            : "Choose keyboard, controller or mouse for each player first";
+        ps_draw_center_text(renderer, font, message, white, hint);
     }
 
-    if (ps_cursor_on && (ps_focus_field == 1 || ps_focus_field == 2) && font) {
+    if (ps_cursor_on && (ps_focus_field == 1 || (player_count == 2 && ps_focus_field == 2)) && font) {
         char tmp[256];
         int tw = 0;
         SDL_Rect box = (ps_focus_field == 1) ? ps_input1 : ps_input2;
@@ -598,11 +794,38 @@ void PlayerSelect_Affichage(Game *game, SDL_Renderer *renderer) {
         SDL_RenderDrawLine(renderer, box.x + 8 + tw, box.y + 8, box.x + 8 + tw, box.y + box.h - 8);
     }
 
-    SDL_Rect score_btn_draw = ps_score_btn;
-    if (game->psScoreBtnTex) {
-        SDL_RenderCopy(renderer, game->psScoreBtnTex, NULL, &score_btn_draw);
-    } else {
-        ps_draw_center_text(renderer, font, "SCORES", white, score_btn_draw);
+    if (player_count == 1) {
+        Uint8 old_r = 255, old_g = 255, old_b = 255, old_a = 255;
+        SDL_BlendMode old_blend = SDL_BLENDMODE_NONE;
+        int center_x = ps_score_btn.x + (ps_score_btn.w / 2);
+        int cy = ps_score_btn.y + (ps_score_btn.h / 2);
+        int left_selected = (ps_mono_character_index == 0);
+        int active_radius = 7;
+        int inactive_radius = 4;
+        int spacing = 12;
+        int left_x = center_x - spacing;
+        int right_x = center_x + spacing;
+
+        SDL_GetRenderDrawColor(renderer, &old_r, &old_g, &old_b, &old_a);
+        SDL_GetRenderDrawBlendMode(renderer, &old_blend);
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+        ps_draw_filled_circle(renderer, left_x, cy,
+                              left_selected ? active_radius : inactive_radius,
+                              255, 255, 255, left_selected ? 255 : 95);
+        ps_draw_filled_circle(renderer, right_x, cy,
+                              left_selected ? inactive_radius : active_radius,
+                              255, 255, 255, left_selected ? 95 : 255);
+
+        SDL_SetRenderDrawBlendMode(renderer, old_blend);
+        SDL_SetRenderDrawColor(renderer, old_r, old_g, old_b, old_a);
+    } else if (player_count == 2) {
+        if (ps_not_ready_tex) {
+            SDL_Texture *ready_state_tex = (ps_hover_score && ps_ready_tex) ? ps_ready_tex : ps_not_ready_tex;
+            ps_draw_texture_in_rect(renderer, ready_state_tex, ps_score_btn);
+        } else {
+            ps_draw_center_text(renderer, font, "SCORES", white, ps_score_btn);
+        }
     }
 }
 

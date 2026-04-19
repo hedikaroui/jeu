@@ -34,6 +34,7 @@ typedef enum {
     STATE_ENIGME,
     STATE_ENIGME_QUIZ,
     STATE_HISTOIRE,
+    STATE_DISPLAY_CHOICE,
     STATE_GAME,
     STATE_QUIT,
 
@@ -53,6 +54,7 @@ typedef struct {
     SDL_Texture *walkTexture;
     SDL_Texture *walkBackTexture;
     SDL_Texture *runTexture;
+    SDL_Texture *runBackTexture;
     SDL_Texture *jumpTexture;
     SDL_Texture *jumpBackTexture;
     SDL_Rect position;
@@ -341,6 +343,8 @@ typedef struct {
     SDL_Texture *psHelpIconHoverTex;
     SDL_Texture *psHelpButtonTex;
     int player_mode;
+    int solo_selected_player; /* 0: first player, 1: second player */
+    int duo_display_mode;     /* 0: same screen, 1: vertical split, 2: horizontal split */
 
     SDL_Texture *optionsBg;
     SDL_Texture *optionsTitle;
@@ -373,6 +377,7 @@ typedef struct {
     Mix_Chunk *quizLaugh;
 
     Personnage gameCharacter;
+    Personnage gameCharacter2;
     int gameLoaded;
     Uint32 gameLastTick;
 
@@ -422,6 +427,10 @@ void Game_LectureEntree(Game *game);
 void Game_Affichage(Game *game, SDL_Renderer *renderer);
 int Game_Charger(Game *game, SDL_Renderer *renderer);
 void Game_MiseAJour(Game *game);
+
+void DisplayChoice_LectureEntree(Game *game);
+void DisplayChoice_Affichage(Game *game, SDL_Renderer *renderer);
+void DisplayChoice_MiseAJour(Game *game);
 
 int StartPlay_Charger(Game *game, SDL_Renderer *renderer);
 void StartPlay_LectureEntree(Game *game);

@@ -19,6 +19,7 @@ GameState Game_MainStateFromSubState(GameSubState subState) {
 
         case STATE_PLAYER:
         case STATE_PLAYER_CONFIG:
+        case STATE_DISPLAY_CHOICE:
             return MAIN_STATE_PLAYER;
 
         case STATE_MENU:
@@ -57,6 +58,22 @@ void Game_ResetRuntime(Game *game) {
     game->gameCharacter.pendingJump = 0;
     game->gameCharacter.frameIndex = 0;
     game->gameCharacter.lastFrameTick = 0;
+
+    game->gameCharacter2.up = 0;
+    game->gameCharacter2.jumpPhase = 0;
+    game->gameCharacter2.posinit = 0;
+    game->gameCharacter2.posinitX = 0;
+    game->gameCharacter2.jumpRelX = -50.0;
+    game->gameCharacter2.jumpRelY = 0.0;
+    game->gameCharacter2.jumpProgress = 0.0;
+    game->gameCharacter2.jumpDir = 0;
+    game->gameCharacter2.groundY = 0;
+    game->gameCharacter2.facing = -1;
+    game->gameCharacter2.moving = 0;
+    game->gameCharacter2.movementState = 0;
+    game->gameCharacter2.pendingJump = 0;
+    game->gameCharacter2.frameIndex = 0;
+    game->gameCharacter2.lastFrameTick = 0;
 }
 
 int Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer) {
@@ -128,6 +145,8 @@ int Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer) {
     game->psHelpIconHoverTex = NULL;
     game->psHelpButtonTex = NULL;
     game->player_mode = 2;
+    game->solo_selected_player = 0;
+    game->duo_display_mode = 0;
     memset(&game->ps_bg, 0, sizeof(game->ps_bg));
 
     game->msGreTex = IMG_LoadTexture(*renderer, SCORE_BACK_HOVER);
@@ -286,8 +305,17 @@ void Liberation(Game *game, SDL_Window *window, SDL_Renderer *renderer) {
     if (game->gameCharacter.walkTexture) SDL_DestroyTexture(game->gameCharacter.walkTexture);
     if (game->gameCharacter.walkBackTexture) SDL_DestroyTexture(game->gameCharacter.walkBackTexture);
     if (game->gameCharacter.runTexture) SDL_DestroyTexture(game->gameCharacter.runTexture);
+    if (game->gameCharacter.runBackTexture) SDL_DestroyTexture(game->gameCharacter.runBackTexture);
     if (game->gameCharacter.jumpTexture) SDL_DestroyTexture(game->gameCharacter.jumpTexture);
     if (game->gameCharacter.jumpBackTexture) SDL_DestroyTexture(game->gameCharacter.jumpBackTexture);
+    if (game->gameCharacter2.idleTexture) SDL_DestroyTexture(game->gameCharacter2.idleTexture);
+    if (game->gameCharacter2.idleBackTexture) SDL_DestroyTexture(game->gameCharacter2.idleBackTexture);
+    if (game->gameCharacter2.walkTexture) SDL_DestroyTexture(game->gameCharacter2.walkTexture);
+    if (game->gameCharacter2.walkBackTexture) SDL_DestroyTexture(game->gameCharacter2.walkBackTexture);
+    if (game->gameCharacter2.runTexture) SDL_DestroyTexture(game->gameCharacter2.runTexture);
+    if (game->gameCharacter2.runBackTexture) SDL_DestroyTexture(game->gameCharacter2.runBackTexture);
+    if (game->gameCharacter2.jumpTexture) SDL_DestroyTexture(game->gameCharacter2.jumpTexture);
+    if (game->gameCharacter2.jumpBackTexture) SDL_DestroyTexture(game->gameCharacter2.jumpBackTexture);
 
     StartPlay_Cleanup();
 
@@ -300,9 +328,9 @@ void Liberation(Game *game, SDL_Window *window, SDL_Renderer *renderer) {
 }
 
 static int joueurs_non_configures(const Game *game) {
-    return !game->ps_loaded ||
-           strlen(game->player1_name) == 0 ||
-           strlen(game->player2_name) == 0;
+    if (!game || !game->ps_loaded) return 1;
+    if (strlen(game->player1_name) == 0) return 1;
+    return game->player_mode != 1 && strlen(game->player2_name) == 0;
 }
 
 void GameLoop_ModuleInitialisationEtat(Game *game, SDL_Renderer *renderer) {
@@ -318,6 +346,10 @@ void GameLoop_ModuleInitialisationEtat(Game *game, SDL_Renderer *renderer) {
 
         case STATE_PLAYER:
         case STATE_PLAYER_CONFIG:
+            if (!game->ps_loaded) PlayerSelect_Charger(game, renderer);
+            break;
+
+        case STATE_DISPLAY_CHOICE:
             if (!game->ps_loaded) PlayerSelect_Charger(game, renderer);
             break;
 
@@ -363,6 +395,10 @@ void GameLoop_ModuleInput(Game *game) {
         case STATE_PLAYER:
         case STATE_PLAYER_CONFIG:
             PlayerSelect_LectureEntree(game);
+            break;
+
+        case STATE_DISPLAY_CHOICE:
+            DisplayChoice_LectureEntree(game);
             break;
 
         case STATE_SCORES_INPUT:
@@ -414,6 +450,10 @@ void GameLoop_ModuleUpdate(Game *game) {
             PlayerSelect_MiseAJour(game);
             break;
 
+        case STATE_DISPLAY_CHOICE:
+            DisplayChoice_MiseAJour(game);
+            break;
+
         case STATE_START_PLAY:
             StartPlay_MiseAJour(game);
             break;
@@ -458,6 +498,10 @@ void GameLoop_ModuleAffichage(Game *game, SDL_Renderer *renderer) {
         case STATE_PLAYER:
         case STATE_PLAYER_CONFIG:
             PlayerSelect_Affichage(game, renderer);
+            break;
+
+        case STATE_DISPLAY_CHOICE:
+            DisplayChoice_Affichage(game, renderer);
             break;
 
         case STATE_SCORES_INPUT:
