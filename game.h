@@ -8,20 +8,12 @@
 
 #define MAX_SNOWBALLS 20
 
-
-
-typedef struct {
-    int alive;
-    int hurt;      
-    int neutralized;
-    int playerTouch; 
-} State;
-
 typedef struct {
     SDL_Texture *textureNormal;
     SDL_Texture *textureHurt;
-    SDL_Rect position;
-    SDL_Rect posSprite;
+    SDL_Texture *treeTexture;
+    SDL_Rect     position;
+    SDL_Rect     posSprite;
     int frameWidth;
     int frameHeight;
     int frame;
@@ -29,31 +21,37 @@ typedef struct {
     int nbRows;
     int direction;
     int health;
-    State state;
+    int alive;
+    int hurt;
+    int neutralized;
+    int playerTouch;
+    int hurtTimer;
+    int playerTouchTimer;
+    int recoilTimer;
+    int recoiling;
+    int blinkTimer;
+    int blinking;
+    int trees;
+    int currentSpeed;
 } Enemy;
 
 typedef struct {
     SDL_Texture *texture;
-    SDL_Rect position;
+    SDL_Rect     position;
     int active;
 } Obstacle;
 
 typedef struct {
-    int trees;
-    SDL_Texture *treeTexture;
-} HUD;
-
-typedef struct {
+    SDL_Texture *texture;
+    SDL_Rect     rect;
     int x, y;
     int speed;
     int active;
-    SDL_Rect rect;
-    SDL_Texture *texture;
 } Snowball;
 
 typedef struct {
     SDL_Texture *texture;
-    SDL_Rect position;
+    SDL_Rect     position;
     int frame;
     int maxFrames;
     int frameWidth;
@@ -61,44 +59,44 @@ typedef struct {
     int speed;
     int isRunning;
     int direction;
+    int acceleration;
+    int maxSpeed;
 } Player;
 
+void init(SDL_Renderer *renderer,
+          Enemy    *enemy,  char *normalPath, int normalCols, int normalRows,
+                            char *hurtPath,   int hurtCols,   int hurtRows,
+                            char *treePath,
+          Obstacle *obs,    char *obsPath,    int x,          int y,
+          Snowball *sb,     char *snowPath,
+          Player   *player, char *playerPath, int nbCols,     int nbRows);
 
+void affichage(SDL_Renderer *renderer,
+               Enemy *enemy, Obstacle *obs,
+               Snowball snowballs[], int snowballCount,
+               Player *player);
 
+void move(Enemy *enemy, Obstacle *obs);
 
-void initEnemy(SDL_Renderer *renderer, Enemy *enemy,const char *normalPath, int normalCols, int normalRows,const char *hurtPath, int hurtCols, int hurtRows);
-void moveAndAnimateEnemy(Enemy *enemy);
-void renderEnemy(SDL_Renderer *renderer, Enemy *enemy);
+void updatePlayer(Player *player, Enemy *enemy,
+                  Snowball snowballs[], int *snowballCount);
 
-void initObstacle(SDL_Renderer *renderer, Obstacle *obs, const char *spritePath, int x, int y);
-void renderObstacle(SDL_Renderer *renderer, Obstacle *obs);
-void moveObstacle(Obstacle *obs);
+void checkCollision(SDL_Renderer *renderer,
+                    Enemy *enemy, Obstacle *obs,
+                    Mix_Chunk *collisionSound,
+                    Snowball snowballs[], int *snowballCount,
+                    Player *player);
 
+void handleInput(SDL_Event *event, Player *player,
+                 Snowball snowballs[], int *snowballCount);
 
-void checkCollision(SDL_Renderer *renderer, Enemy *enemy, Obstacle *obs, Mix_Chunk *collisionSound);
+void scrollBackground(SDL_Renderer *renderer, Enemy *enemy,
+                      Obstacle *obs);
 
+void destroyAll(Enemy *enemy, Obstacle *obs,
+                Mix_Chunk *collisionSound, Snowball *snowball);
 
-void scrollBackground(SDL_Renderer *renderer, Enemy *enemy, Obstacle *obs);
-
-
-void initHUD(HUD *hud, SDL_Renderer *renderer, const char *treePath);
-void renderHUD(SDL_Renderer *renderer, HUD *hud);
-
-
-void initSnowball(SDL_Renderer *renderer, Snowball *sb, const char *spritePath);
-void handleSnowballThrow(SDL_Event *event, Player *player, Snowball snowballs[], int *snowballCount);
-void updateSnowballs(Snowball snowballs[], int *snowballCount);
-void renderSnowballs(SDL_Renderer *renderer, Snowball snowballs[], int snowballCount);
-void checkSnowballEnemyCollision(Snowball snowballs[], int *snowballCount, Enemy *enemy, HUD *hud);
-
-
-void initPlayer(SDL_Renderer *renderer, Player *player, const char *spritePath, int nbCols, int nbRows, Enemy *enemy);
-void handlePlayerMovement(SDL_Event *event, Player *player);  
-void updatePlayer(Player *player, Enemy *enemy);               
-void renderPlayer(SDL_Renderer *renderer, Player *player);    
-void checkPlayerEnemyCollision(Player *player, Enemy *enemy);  
-
-
-void destroyAll(Enemy *enemy, Obstacle *spider, Obstacle *falling, Mix_Chunk *collisionSound, HUD *hud, Snowball *snowball);
+void initObstacle(SDL_Renderer *renderer, Obstacle *obs, char *path, int x, int y);
 
 #endif
+
