@@ -165,6 +165,8 @@ int Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer) {
     game->duo_display_mode = 0;
     game->duo_background_mode = 0;
     game->minimap_zoom = 1.0f;
+    game->playerControls[0] = GAME_CONTROL_KEYBOARD;
+    game->playerControls[1] = GAME_CONTROL_KEYBOARD;
     game->keyBindings[0][KEY_ACTION_WALK] = SDL_SCANCODE_D;
     game->keyBindings[0][KEY_ACTION_JUMP] = SDL_SCANCODE_W;
     game->keyBindings[0][KEY_ACTION_RUN] = SDL_SCANCODE_LSHIFT;
@@ -325,6 +327,12 @@ void Liberation(Game *game, SDL_Window *window, SDL_Renderer *renderer) {
     if (game->quizBtnA) SDL_DestroyTexture(game->quizBtnA);
     if (game->quizBtnB) SDL_DestroyTexture(game->quizBtnB);
     if (game->quizBtnC) SDL_DestroyTexture(game->quizBtnC);
+    for (int i = 0; i < 2; i++) {
+        if (game->puzzlePictureTex[i]) SDL_DestroyTexture(game->puzzlePictureTex[i]);
+        for (int j = 0; j < 3; j++) {
+            if (game->puzzlePieceTex[i][j]) SDL_DestroyTexture(game->puzzlePieceTex[i][j]);
+        }
+    }
     if (game->quizFont) TTF_CloseFont(game->quizFont);
     if (game->quizMusic) Mix_FreeMusic(game->quizMusic);
     if (game->quizBeep) Mix_FreeChunk(game->quizBeep);
@@ -352,6 +360,9 @@ void Liberation(Game *game, SDL_Window *window, SDL_Renderer *renderer) {
     if (game->gameCharacter2.damageTexture) SDL_DestroyTexture(game->gameCharacter2.damageTexture);
     if (game->gameCharacter2.layDownTexture) SDL_DestroyTexture(game->gameCharacter2.layDownTexture);
     if (game->gameEnemyTex) SDL_DestroyTexture(game->gameEnemyTex);
+    if (game->gameEnemyStandTex) SDL_DestroyTexture(game->gameEnemyStandTex);
+    if (game->gameEnemyWalkTex) SDL_DestroyTexture(game->gameEnemyWalkTex);
+    if (game->gameEnemyRunTex) SDL_DestroyTexture(game->gameEnemyRunTex);
     if (game->gameSpiderTex) SDL_DestroyTexture(game->gameSpiderTex);
     if (game->gameFallingTex) SDL_DestroyTexture(game->gameFallingTex);
     if (game->gameObstacleHitSound) Mix_FreeChunk(game->gameObstacleHitSound);

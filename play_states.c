@@ -44,6 +44,10 @@ static Uint32 startPlayLastJumpDebugTick = 0;
 #define STARTPLAY_WALK_FRAME_BONUS_DIV 28
 #define STARTPLAY_WALK_FRAME_BONUS_CAP 95
 #define STARTPLAY_WALK_FRAME_MIN_MS 40
+#define GAME_ENIGME_INTRO_DELAY_MS 3000u
+
+static Uint32 game_enigme_intro_tick = 0;
+static int game_enigme_intro_shown = 0;
 
 static const char *startplay_wave_msgs[] = {
     "HEEY ,YOU ",
@@ -60,8 +64,42 @@ static int game_key_pressed(const Uint8 *keys, SDL_Scancode sc) {
     return keys[sc] != 0;
 }
 
+static int game_player_uses_mouse(const Game *game, int player_index) {
+    if (!game || player_index < 0 || player_index > 1) return 0;
+    return game->playerControls[player_index] == GAME_CONTROL_MOUSE;
+}
+
+static int game_mouse_owner(const Game *game) {
+    int player_count;
+
+    if (!game) return -1;
+    player_count = (game->player_mode != 1) ? 2 : 1;
+    for (int i = 0; i < player_count; i++) {
+        if (game_player_uses_mouse(game, i)) return i;
+    }
+    return -1;
+}
+
+static void game_mouse_direction_for_rect(SDL_Rect rect, int *left_pressed,
+                                          int *right_pressed, int *run_modifier) {
+    int mx;
+    int my;
+    int dx;
+    const int deadzone = 28;
+    const int run_distance = 210;
+
+    SDL_GetMouseState(&mx, &my);
+    (void)my;
+    dx = mx - (rect.x + rect.w / 2);
+
+    if (left_pressed) *left_pressed = (dx < -deadzone);
+    if (right_pressed) *right_pressed = (dx > deadzone);
+    if (run_modifier) *run_modifier = (abs(dx) > run_distance);
+}
+
 static void game_minimap_ensure_layout(void);
 static int game_handle_minimap_mouse_event(const SDL_Event *e);
+static void game_update_minimap_spark(Uint32 now);
 static void game_render_background(Game *game, SDL_Renderer *renderer, SDL_Rect dst,
                                    int focus_x, int focus_y);
 static void game_render_minimap_overlay(Game *game, SDL_Renderer *renderer, int include_second_player,
@@ -74,8 +112,16 @@ static void game_render_world_hazards(Game *game, SDL_Renderer *renderer);
 static void game_destroy_character_textures(Personnage *p);
 static void game_load_harry_character(SDL_Renderer *renderer, Personnage *p);
 static void game_load_marvin_character(SDL_Renderer *renderer, Personnage *p);
+static void game_load_enemy_textures(Game *game, SDL_Renderer *renderer);
 static int game_update_damage_state(Personnage *p, Uint32 now);
 static void game_draw_character(SDL_Renderer *renderer, Personnage *p);
+static void game_draw_enemy_sprite(SDL_Renderer *renderer, const GameEnemy *enemy,
+                                   SDL_Rect dst_rect);
+static void game_draw_minimap_player_marker(SDL_Renderer *renderer, const Personnage *player,
+                                            SDL_Texture *fallback_texture,
+                                            SDL_Rect marker, SDL_Color fallback,
+                                            int move_dir, Uint32 now);
+static void games_reset_menu_state(void);
 
 static void start_play_reload_texture(SDL_Renderer *renderer, SDL_Texture **dst, const char *path) {
     if (!dst) return;
@@ -267,6 +313,7 @@ static void game_sync_start_play_character(Game *game) {
 
     p->up = startPlayJumping;
     p->moving = startPlayAnim.moving;
+    p->frameIndex = startPlayAnim.frame_index;
 
     if (startPlayJumping) {
         p->movementState = (startPlayAnim.facing < 0) ? GAME_MOVE_JUMP_BACK : GAME_MOVE_JUMP;
@@ -363,14 +410,7 @@ int StartPlay_Charger(Game *game, SDL_Renderer *renderer) {
         game->miniMapLockClosedTex = IMG_LoadTexture(renderer, "buttons/ferme_lock_1.png");
     if (!game->miniMapLockOpenTex)
         game->miniMapLockOpenTex = IMG_LoadTexture(renderer, "buttons/ouvert_lock_2.png");
-    if (!game->gameEnemyTex)
-        game->gameEnemyTex = IMG_LoadTexture(renderer, "enemyobtacle/enemy.png");
-    if (!game->gameSpiderTex)
-        game->gameSpiderTex = IMG_LoadTexture(renderer, "enemyobtacle/spider.png");
-    if (!game->gameFallingTex)
-        game->gameFallingTex = IMG_LoadTexture(renderer, "enemyobtacle/falling.png");
-    if (!game->gameObstacleHitSound)
-        game->gameObstacleHitSound = Mix_LoadWAV("enemyobtacle/sound.wav");
+    game_load_enemy_textures(game, renderer);
 
     use_marvin = (game->player_mode == 1 && game->solo_selected_player == 1);
     if (use_marvin) {
@@ -487,6 +527,10 @@ int StartPlay_Charger(Game *game, SDL_Renderer *renderer) {
     startPlayIntroStart = SDL_GetTicks();
     startPlayLastTick = startPlayIntroStart;
     start_play_reset_mover();
+    if (game->player_mode == 1) {
+        game_enigme_intro_tick = startPlayIntroStart + GAME_ENIGME_INTRO_DELAY_MS;
+        game_enigme_intro_shown = 0;
+    }
     game_sync_start_play_character(game);
     game_reset_enemy_obstacles(game);
 
@@ -500,6 +544,10 @@ void StartPlay_LectureEntree(Game *game) {
         startPlayIntroStart = SDL_GetTicks();
         startPlayLastTick = startPlayIntroStart;
         start_play_reset_mover();
+        if (game && game->player_mode == 1) {
+            game_enigme_intro_tick = startPlayIntroStart + GAME_ENIGME_INTRO_DELAY_MS;
+            game_enigme_intro_shown = 0;
+        }
     }
 
     while (SDL_PollEvent(&e)) {
@@ -510,6 +558,12 @@ void StartPlay_LectureEntree(Game *game) {
         if (game->player_mode == 1 &&
             SDL_GetTicks() - startPlayIntroStart >= 2000 &&
             game_handle_minimap_mouse_event(&e)) {
+            continue;
+        }
+        if (e.type == SDL_MOUSEBUTTONDOWN &&
+            e.button.button == SDL_BUTTON_LEFT &&
+            game_mouse_owner(game) == 0) {
+            startPlayPendingJump = 1;
             continue;
         }
         if (e.type == SDL_KEYDOWN) {
@@ -542,6 +596,23 @@ void StartPlay_LectureEntree(Game *game) {
     Uint32 now = SDL_GetTicks();
     Uint32 dt = (startPlayLastTick == 0) ? 16u : (now - startPlayLastTick);
     startPlayLastTick = now;
+    game_update_minimap_spark(now);
+
+    if (game && game->player_mode == 1 &&
+        !game_enigme_intro_shown &&
+        game_enigme_intro_tick != 0 &&
+        now >= game_enigme_intro_tick) {
+        game_enigme_intro_shown = 1;
+        game_enigme_intro_tick = 0;
+        game_sync_start_play_character(game);
+        games_reset_menu_state();
+        if (startPlayAnim.dance_loop_channel >= 0) {
+            Mix_HaltChannel(startPlayAnim.dance_loop_channel);
+            startPlayAnim.dance_loop_channel = -1;
+        }
+        Game_SetSubState(game, STATE_ENIGME);
+        return;
+    }
 
     if (game && game->gameCharacter.damageActive) {
         int still_damaged = game_update_damage_state(&game->gameCharacter, now);
@@ -570,6 +641,15 @@ void StartPlay_LectureEntree(Game *game) {
     int jump_pressed = startPlayPendingJump ||
                        game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_JUMP]);
     int has_move_input = left_pressed || right_pressed;
+
+    if (game_player_uses_mouse(game, 0)) {
+        game_mouse_direction_for_rect(startPlayPlayerRect,
+                                      &left_pressed,
+                                      &right_pressed,
+                                      &run_pressed);
+        jump_pressed = startPlayPendingJump;
+        has_move_input = left_pressed || right_pressed;
+    }
 
     if (jump_pressed && !startPlayJumping) {
         int jump_dir = 0;
@@ -944,11 +1024,14 @@ void StartPlay_Cleanup(void) {
 }
 
 static int game_jump_latch = 0;
-static Uint32 game_last_jump_debug_tick = 0;
 
 #define GAME_SHEET_ROWS 5
 #define GAME_SHEET_COLS 5
 #define GAME_JUMP_DURATION_MS 620.0
+#define GAME_JUMP_REL_MIN -50.0
+#define GAME_JUMP_REL_MAX 50.0
+#define GAME_JUMP_PARABOLA_A -0.04
+#define GAME_JUMP_PARABOLA_C 100.0
 #define GAME_SPRITE_FRAME_COUNT (GAME_SHEET_ROWS * GAME_SHEET_COLS)
 #define GAME_SPRITE_CACHE_MAX 48
 #define GAME_CHARACTER_BOX_W 170
@@ -965,6 +1048,12 @@ static Uint32 game_last_jump_debug_tick = 0;
 #define GAME_ENEMY_ALERT_DISTANCE 285
 #define GAME_ENEMY_FOLLOW_SPEED 3
 #define GAME_ENEMY_FLEE_SPEED 5
+#define GAME_ENEMY_ANIM_STAND 0
+#define GAME_ENEMY_ANIM_WALK 1
+#define GAME_ENEMY_ANIM_RUN 2
+#define GAME_ENEMY_STAND_FRAME_MS 140u
+#define GAME_ENEMY_WALK_FRAME_MS 110u
+#define GAME_ENEMY_RUN_FRAME_MS 70u
 #define GAME_OBSTACLE_RIGHT 0
 #define GAME_OBSTACLE_LEFT 1
 
@@ -988,11 +1077,14 @@ static Uint32 duoStartTime = 0;
 #define GAME_MINIMAP_FRAME_PAD 18
 #define GAME_MINIMAP_PADDING 2
 #define GAME_MINIMAP_MARKER_MIN 6
-#define GAME_MINIMAP_MARKER_MAX 16
+#define GAME_MINIMAP_MARKER_MAX 24
 #define GAME_MINIMAP_SPLIT_DISTANCE 320
 #define GAME_MINIMAP_LOCK_BOX 42
 #define GAME_MINIMAP_LOCK_ICON 26
 #define GAME_MINIMAP_LOCK_INSET 6
+#define GAME_MINIMAP_SPARK_FRAMES 10
+#define GAME_MINIMAP_SPARK_FRAME_MS 45u
+#define GAME_MINIMAP_SPARK_MAX_LEN 26
 
 static SDL_Rect display_choice_horizontal_rect = {0, 0, 0, 0};
 static SDL_Rect display_choice_vertical_rect = {0, 0, 0, 0};
@@ -1016,6 +1108,15 @@ typedef struct {
     int frame_count;
 } GameSpriteCacheEntry;
 
+typedef struct {
+    int active;
+    int frame;
+    int owner;      /* 0: player1, 1: player2 */
+    int direction;  /* -1 left, +1 right */
+    SDL_Rect world_pos;
+    Uint32 last_tick;
+} GameMinimapSpark;
+
 static GameSpriteCacheEntry game_sprite_cache[GAME_SPRITE_CACHE_MAX];
 static SDL_Point game_minimap_top_left = {0, 0};
 static int game_minimap_layout_initialized = 0;
@@ -1023,6 +1124,9 @@ static int game_minimap_drag_unlocked = 0;
 static int game_minimap_dragging = 0;
 static int game_minimap_drag_offset_x = 0;
 static int game_minimap_drag_offset_y = 0;
+static GameMinimapSpark game_minimap_spark = {0};
+static Uint32 game_minimap_border_cooldown[2] = {0u, 0u};
+static int game_enemy_collision_latch[2] = {0, 0};
 
 static void game_draw_center_text(SDL_Renderer *renderer, TTF_Font *font, const char *text,
                                   SDL_Color color, SDL_Rect box) {
@@ -1285,6 +1389,22 @@ static SDL_Rect game_world_to_minimap_rect(SDL_Rect world_pos, SDL_Rect minimap_
     return marker;
 }
 
+static int game_minimap_player_move_dir(const Personnage *p) {
+    if (!p || p->damageActive) return 0;
+    switch ((GameMovement)p->movementState) {
+        case GAME_MOVE_WALK:
+        case GAME_MOVE_RUN:
+        case GAME_MOVE_JUMP:
+            return 1;
+        case GAME_MOVE_WALK_BACK:
+        case GAME_MOVE_RUN_BACK:
+        case GAME_MOVE_JUMP_BACK:
+            return -1;
+        default:
+            return 0;
+    }
+}
+
 static void game_draw_minimap_marker(SDL_Renderer *renderer, SDL_Texture *texture,
                                      SDL_Rect marker, SDL_Color fallback) {
     if (!renderer) return;
@@ -1294,6 +1414,68 @@ static void game_draw_minimap_marker(SDL_Renderer *renderer, SDL_Texture *textur
     }
     SDL_SetRenderDrawColor(renderer, fallback.r, fallback.g, fallback.b, fallback.a);
     SDL_RenderFillRect(renderer, &marker);
+}
+
+static void game_trigger_minimap_spark(int owner, SDL_Rect world_pos, int direction, Uint32 now) {
+    game_minimap_spark.active = 1;
+    game_minimap_spark.frame = 0;
+    game_minimap_spark.owner = owner;
+    game_minimap_spark.direction = (direction < 0) ? -1 : 1;
+    game_minimap_spark.world_pos = world_pos;
+    game_minimap_spark.last_tick = now;
+}
+
+static void game_update_minimap_spark(Uint32 now) {
+    Uint32 steps;
+
+    if (!game_minimap_spark.active) return;
+    if (now <= game_minimap_spark.last_tick) return;
+
+    steps = (now - game_minimap_spark.last_tick) / GAME_MINIMAP_SPARK_FRAME_MS;
+    if (steps == 0) return;
+
+    game_minimap_spark.last_tick += steps * GAME_MINIMAP_SPARK_FRAME_MS;
+    game_minimap_spark.frame += (int)steps;
+    if (game_minimap_spark.frame >= GAME_MINIMAP_SPARK_FRAMES) {
+        game_minimap_spark.active = 0;
+        game_minimap_spark.frame = 0;
+    }
+}
+
+static void game_render_minimap_spark(SDL_Renderer *renderer, SDL_Rect marker,
+                                      int direction, int frame) {
+    static const int rays[8][2] = {
+        {1, 0}, {1, 1}, {0, 1}, {-1, 1},
+        {-1, 0}, {-1, -1}, {0, -1}, {1, -1}
+    };
+    int cx;
+    int cy;
+    int len;
+    int alpha;
+
+    if (!renderer) return;
+
+    cx = marker.x + marker.w / 2;
+    cy = marker.y + marker.h / 2;
+    len = 6 + (frame * 2);
+    if (len > GAME_MINIMAP_SPARK_MAX_LEN) len = GAME_MINIMAP_SPARK_MAX_LEN;
+    alpha = 255 - (frame * 22);
+    if (alpha < 40) alpha = 40;
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 255, 224, 60, (Uint8)alpha);
+    for (int i = 0; i < 8; i++) {
+        int dx = rays[i][0];
+        int dy = rays[i][1];
+        int sx = cx + (direction < 0 ? -2 : 2);
+        int ex = sx + dx * len;
+        int ey = cy + dy * len;
+        SDL_RenderDrawLine(renderer, sx, cy, ex, ey);
+    }
+
+    SDL_SetRenderDrawColor(renderer, 255, 110, 35, (Uint8)alpha);
+    SDL_Rect core = {cx - 2, cy - 2, 4, 4};
+    SDL_RenderFillRect(renderer, &core);
 }
 
 static void game_render_minimap_overlay(Game *game, SDL_Renderer *renderer, int include_second_player,
@@ -1306,6 +1488,9 @@ static void game_render_minimap_overlay(Game *game, SDL_Renderer *renderer, int 
     SDL_Rect panel_b;
     SDL_Rect p1_marker;
     SDL_Rect p2_marker;
+    SDL_Rect spark_marker;
+    SDL_Rect spark_panel;
+    SDL_Rect enemy_marker;
     SDL_Rect p1_pos;
     SDL_Texture *lock_tex;
     int focus_x;
@@ -1315,10 +1500,14 @@ static void game_render_minimap_overlay(Game *game, SDL_Renderer *renderer, int 
     int p1_center_y;
     int p2_center_x;
     int p2_center_y;
+    int p1_move_dir;
+    int p2_move_dir;
     int dx;
     int dy;
+    Uint32 now;
 
     if (!game || !renderer) return;
+    now = SDL_GetTicks();
 
     minimap_rect = game_minimap_rect();
     frame_rect = game_minimap_frame_rect(minimap_rect);
@@ -1331,6 +1520,8 @@ static void game_render_minimap_overlay(Game *game, SDL_Renderer *renderer, int 
     focus_y = p1_center_y;
     if (include_second_player) focus_x = (p1_center_x + p2_center_x) / 2;
     if (include_second_player) focus_y = (p1_center_y + p2_center_y) / 2;
+    p1_move_dir = game_minimap_player_move_dir(&game->gameCharacter);
+    p2_move_dir = game_minimap_player_move_dir(&game->gameCharacter2);
 
     if (game->miniMapFrameTex) SDL_RenderCopy(renderer, game->miniMapFrameTex, NULL, &frame_rect);
 
@@ -1372,18 +1563,47 @@ static void game_render_minimap_overlay(Game *game, SDL_Renderer *renderer, int 
         SDL_RenderFillRect(renderer, &minimap_rect);
     }
 
+    if (game->gameEnemy.active && game->gameEnemy.texture) {
+        enemy_marker = game_world_to_minimap_rect(game->gameEnemy.position,
+                                                  split_panels ? panel_a : minimap_rect,
+                                                  game->minimap_zoom);
+        game_draw_enemy_sprite(renderer, &game->gameEnemy, enemy_marker);
+        if (split_panels) {
+            enemy_marker = game_world_to_minimap_rect(game->gameEnemy.position,
+                                                      panel_b,
+                                                      game->minimap_zoom);
+            game_draw_enemy_sprite(renderer, &game->gameEnemy, enemy_marker);
+        }
+    }
+
     p1_marker = game_world_to_minimap_rect(p1_pos,
                                            split_panels ? panel_a : minimap_rect,
                                            game->minimap_zoom);
-    game_draw_minimap_marker(renderer,
-                             primary_marker_tex ? primary_marker_tex : game->player1Tex,
-                             p1_marker, (SDL_Color){235, 84, 84, 255});
+    game_draw_minimap_player_marker(renderer, &game->gameCharacter,
+                                    primary_marker_tex ? primary_marker_tex : game->player1Tex,
+                                    p1_marker, (SDL_Color){235, 84, 84, 255},
+                                    p1_move_dir, now);
 
     if (include_second_player) {
         p2_marker = game_world_to_minimap_rect(game->gameCharacter2.position,
                                                split_panels ? panel_b : minimap_rect,
                                                game->minimap_zoom);
-        game_draw_minimap_marker(renderer, game->player2Tex, p2_marker, (SDL_Color){74, 140, 255, 255});
+        game_draw_minimap_player_marker(renderer, &game->gameCharacter2,
+                                        game->player2Tex,
+                                        p2_marker, (SDL_Color){74, 140, 255, 255},
+                                        p2_move_dir, now);
+    }
+
+    if (game_minimap_spark.active) {
+        spark_panel = minimap_rect;
+        if (include_second_player && split_panels) {
+            spark_panel = (game_minimap_spark.owner == 1) ? panel_b : panel_a;
+        }
+        spark_marker = game_world_to_minimap_rect(game_minimap_spark.world_pos,
+                                                  spark_panel, game->minimap_zoom);
+        game_render_minimap_spark(renderer, spark_marker,
+                                  game_minimap_spark.direction,
+                                  game_minimap_spark.frame);
     }
 
     if (!game->miniMapFrameTex) {
@@ -1805,6 +2025,30 @@ static SDL_Texture *game_load_sprite_texture_first(SDL_Renderer *renderer, const
     return texture;
 }
 
+static void game_load_enemy_textures(Game *game, SDL_Renderer *renderer) {
+    if (!game || !renderer) return;
+
+    if (!game->gameEnemyStandTex) {
+        game->gameEnemyStandTex =
+            game_load_sprite_texture(renderer, "spritesheet_characters/kevin-stand_up.png");
+    }
+    if (!game->gameEnemyWalkTex) {
+        game->gameEnemyWalkTex =
+            game_load_sprite_texture(renderer, "spritesheet_characters/kevin-walk.png");
+    }
+    if (!game->gameEnemyRunTex) {
+        game->gameEnemyRunTex =
+            game_load_sprite_texture(renderer, "spritesheet_characters/kevin-run.png");
+    }
+
+    if (!game->gameEnemyTex &&
+        !game->gameEnemyStandTex &&
+        !game->gameEnemyWalkTex &&
+        !game->gameEnemyRunTex) {
+        game->gameEnemyTex = game_load_sprite_texture(renderer, "enemyobtacle/enemy.png");
+    }
+}
+
 static int game_get_sprite_frame(SDL_Texture *texture, int frame_index, SDL_Rect *src) {
     GameSpriteCacheEntry *entry = game_find_sprite_entry(texture);
     int frame = frame_index % GAME_SPRITE_FRAME_COUNT;
@@ -1831,6 +2075,169 @@ static void game_draw_normalized_frame(SDL_Renderer *renderer, SDL_Texture *tex,
     dst.y = box.y + box.h - dst.h;
 
     SDL_RenderCopy(renderer, tex, &src, &dst);
+}
+
+static void game_draw_normalized_frame_flip(SDL_Renderer *renderer, SDL_Texture *tex,
+                                            SDL_Rect src, SDL_Rect box,
+                                            SDL_RendererFlip flip) {
+    SDL_Rect dst;
+
+    if (!renderer || !tex || src.w <= 0 || src.h <= 0 || box.w <= 0 || box.h <= 0) return;
+
+    dst.h = box.h;
+    dst.w = (int)lround((double)src.w * ((double)dst.h / (double)src.h));
+    if (dst.w < 1) dst.w = 1;
+    if (dst.w > box.w) dst.w = box.w;
+    dst.x = box.x + (box.w - dst.w) / 2;
+    dst.y = box.y + box.h - dst.h;
+
+    SDL_RenderCopyEx(renderer, tex, &src, &dst, 0.0, NULL, flip);
+}
+
+static SDL_Texture *game_minimap_player_texture(const Personnage *player,
+                                                SDL_RendererFlip *flip) {
+    SDL_Texture *texture = NULL;
+
+    if (flip) *flip = SDL_FLIP_NONE;
+    if (!player) return NULL;
+
+    switch ((GameMovement)player->movementState) {
+        case GAME_MOVE_LAY_DOWN:
+            texture = player->layDownTexture ? player->layDownTexture : player->damageTexture;
+            break;
+        case GAME_MOVE_DAMAGE:
+            texture = player->damageTexture;
+            break;
+        case GAME_MOVE_JUMP_BACK:
+            if (player->jumpBackTexture) texture = player->jumpBackTexture;
+            else {
+                texture = player->jumpTexture;
+                if (flip) *flip = SDL_FLIP_HORIZONTAL;
+            }
+            break;
+        case GAME_MOVE_JUMP:
+            texture = player->jumpTexture;
+            break;
+        case GAME_MOVE_RUN_BACK:
+            if (player->runBackTexture) texture = player->runBackTexture;
+            else {
+                texture = player->runTexture;
+                if (flip) *flip = SDL_FLIP_HORIZONTAL;
+            }
+            break;
+        case GAME_MOVE_RUN:
+            texture = player->runTexture;
+            break;
+        case GAME_MOVE_WALK_BACK:
+            if (player->walkBackTexture) texture = player->walkBackTexture;
+            else {
+                texture = player->walkTexture;
+                if (flip) *flip = SDL_FLIP_HORIZONTAL;
+            }
+            break;
+        case GAME_MOVE_WALK:
+            texture = player->walkTexture;
+            break;
+        case GAME_MOVE_STOP:
+        default:
+            if (player->facing < 0 && player->idleBackTexture) texture = player->idleBackTexture;
+            else {
+                texture = player->idleTexture;
+                if (player->facing < 0 && !player->idleBackTexture && flip) {
+                    *flip = SDL_FLIP_HORIZONTAL;
+                }
+            }
+            break;
+    }
+
+    if (!texture) texture = player->idleTexture ? player->idleTexture : player->walkTexture;
+    return texture;
+}
+
+static int game_get_sheet_cell_src(SDL_Texture *texture, int frame_index, SDL_Rect *src) {
+    int tex_w = 0;
+    int tex_h = 0;
+    int frame_w;
+    int frame_h;
+    int frame;
+
+    if (!texture || !src) return 0;
+    if (game_get_sprite_frame(texture, frame_index, src)) return 1;
+
+    if (SDL_QueryTexture(texture, NULL, NULL, &tex_w, &tex_h) != 0 ||
+        tex_w <= 0 || tex_h <= 0) {
+        return 0;
+    }
+
+    frame_w = tex_w / GAME_SHEET_COLS;
+    frame_h = tex_h / GAME_SHEET_ROWS;
+    if (frame_w <= 0 || frame_h <= 0) {
+        *src = (SDL_Rect){0, 0, tex_w, tex_h};
+        return 1;
+    }
+
+    frame = frame_index % GAME_SPRITE_FRAME_COUNT;
+    if (frame < 0) frame += GAME_SPRITE_FRAME_COUNT;
+    *src = (SDL_Rect){
+        (frame % GAME_SHEET_COLS) * frame_w,
+        (frame / GAME_SHEET_COLS) * frame_h,
+        frame_w,
+        frame_h
+    };
+    return 1;
+}
+
+static void game_draw_minimap_player_marker(SDL_Renderer *renderer, const Personnage *player,
+                                            SDL_Texture *fallback_texture,
+                                            SDL_Rect marker, SDL_Color fallback,
+                                            int move_dir, Uint32 now) {
+    SDL_Rect draw = marker;
+    SDL_Rect src;
+    SDL_Texture *texture;
+    SDL_RendererFlip flip = SDL_FLIP_NONE;
+
+    if (!renderer) return;
+
+    if (move_dir != 0) {
+        int grow = 1 + (int)lround((sin((double)now / 95.0) + 1.0) * 1.5);
+        int bob = (int)lround(sin((double)now / 80.0) * 1.5);
+        draw.x -= grow / 2;
+        draw.y -= (grow / 2) + bob;
+        draw.w += grow;
+        draw.h += grow;
+
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        for (int i = 1; i <= 3; i++) {
+            SDL_Rect t = draw;
+            t.w -= i;
+            t.h -= i;
+            if (t.w < 2) t.w = 2;
+            if (t.h < 2) t.h = 2;
+            t.x -= move_dir * i * 3;
+            t.y += i;
+            SDL_SetRenderDrawColor(renderer, fallback.r, fallback.g, fallback.b,
+                                   (Uint8)(150 - i * 35));
+            SDL_RenderFillRect(renderer, &t);
+        }
+
+        SDL_SetRenderDrawColor(renderer, 255, 245, 140, 190);
+        {
+            int cx = draw.x + draw.w / 2;
+            int cy = draw.y + draw.h / 2;
+            int fx = cx + move_dir * (draw.w / 2 + 5);
+            SDL_RenderDrawLine(renderer, cx, cy, fx, cy);
+            SDL_RenderDrawLine(renderer, fx, cy, fx - move_dir * 3, cy - 2);
+            SDL_RenderDrawLine(renderer, fx, cy, fx - move_dir * 3, cy + 2);
+        }
+    }
+
+    texture = game_minimap_player_texture(player, &flip);
+    if (texture && game_get_sheet_cell_src(texture, player ? player->frameIndex : 0, &src)) {
+        game_draw_normalized_frame_flip(renderer, texture, src, draw, flip);
+        return;
+    }
+
+    game_draw_minimap_marker(renderer, fallback_texture, draw, fallback);
 }
 
 static void game_draw_sheet_frame(SDL_Renderer *renderer, SDL_Texture *tex, int frame_index,
@@ -2013,7 +2420,7 @@ static void game_state_reset_character(Personnage *p) {
     p->jumpPhase = 0;
     p->posinit = p->position.y;
     p->posinitX = p->position.x;
-    p->jumpRelX = -50.0;
+    p->jumpRelX = GAME_JUMP_REL_MIN;
     p->jumpRelY = 0.0;
     p->jumpProgress = 0.0;
     p->jumpDir = 0;
@@ -2030,7 +2437,6 @@ static void game_state_reset_character(Personnage *p) {
     p->damageActive = 0;
     p->damageStartTick = 0;
     p->damageInvulnUntil = 0;
-    game_last_jump_debug_tick = 0;
     game_jump_latch = 0;
 }
 
@@ -2100,18 +2506,16 @@ static void game_move_run_back(Personnage *p, int step, Uint32 now) {
 static void game_move_jump(Personnage *p, Uint32 now) {
     if (!p || p->up) return;
     p->up = 1;
-    p->jumpPhase = 1;
+    p->jumpPhase = 1; /* 1 = montee, 2 = descente */
     p->moving = 0;
     p->facing = 1;
     p->posinitX = p->position.x;
     p->posinit = p->position.y;
-    p->jumpRelX = -50.0;
+    p->jumpRelX = GAME_JUMP_REL_MIN;
     p->jumpRelY = 0.0;
     p->jumpProgress = 0.0;
     p->jumpDir = 1;
     game_set_movement(p, GAME_MOVE_JUMP, now);
-    printf("[JUMP] start forward base=(%d,%d)\n", p->posinitX, p->posinit);
-    fflush(stdout);
 }
 
 static void game_move_jump_back(Personnage *p, Uint32 now) {
@@ -2122,13 +2526,11 @@ static void game_move_jump_back(Personnage *p, Uint32 now) {
     p->facing = -1;
     p->posinitX = p->position.x;
     p->posinit = p->position.y;
-    p->jumpRelX = -50.0;
+    p->jumpRelX = GAME_JUMP_REL_MIN;
     p->jumpRelY = 0.0;
     p->jumpProgress = 0.0;
     p->jumpDir = -1;
     game_set_movement(p, GAME_MOVE_JUMP_BACK, now);
-    printf("[JUMP] start back base=(%d,%d)\n", p->posinitX, p->posinit);
-    fflush(stdout);
 }
 
 static void game_move_jump_up(Personnage *p, Uint32 now) {
@@ -2138,61 +2540,51 @@ static void game_move_jump_up(Personnage *p, Uint32 now) {
     p->moving = 0;
     p->posinitX = p->position.x;
     p->posinit = p->position.y;
-    p->jumpRelX = -50.0;
+    p->jumpRelX = GAME_JUMP_REL_MIN;
     p->jumpRelY = 0.0;
     p->jumpProgress = 0.0;
     p->jumpDir = 0;
     game_set_movement(p, (p->facing < 0) ? GAME_MOVE_JUMP_BACK : GAME_MOVE_JUMP, now);
-    printf("[JUMP] start vertical base=(%d,%d)\n", p->posinitX, p->posinit);
-    fflush(stdout);
 }
 
 static void game_move_animation(Personnage *p, Uint32 now);
 
 static void game_update_jump(Personnage *p, Uint32 dt, Uint32 now) {
-    double t;
-    double smooth_t;
-    double rel_y;
+    double rel_range;
+    double rel_step;
     int dir;
 
     if (!p || !p->up) return;
 
-    p->jumpProgress += (double)dt / GAME_JUMP_DURATION_MS;
-    if (p->jumpProgress > 1.0) p->jumpProgress = 1.0;
+    rel_range = GAME_JUMP_REL_MAX - GAME_JUMP_REL_MIN;
+    rel_step = (rel_range * (double)dt) / GAME_JUMP_DURATION_MS;
+    if (rel_step < 0.0) rel_step = 0.0;
+    p->jumpRelX += rel_step;
+    if (p->jumpRelX > GAME_JUMP_REL_MAX) p->jumpRelX = GAME_JUMP_REL_MAX;
 
-    t = p->jumpProgress;
-    smooth_t = t * t * (3.0 - 2.0 * t);
-    p->jumpRelX = -50.0 + (100.0 * smooth_t);
+    p->jumpRelY = (GAME_JUMP_PARABOLA_A * (p->jumpRelX * p->jumpRelX)) + GAME_JUMP_PARABOLA_C;
+    if (p->jumpRelY < 0.0) p->jumpRelY = 0.0;
+    p->jumpProgress = (p->jumpRelX - GAME_JUMP_REL_MIN) / rel_range;
 
-    rel_y = (-0.04 * (p->jumpRelX * p->jumpRelX)) + 100.0;
-    p->jumpRelY = rel_y;
+    if (p->jumpRelX >= 0.0) p->jumpPhase = 2;
 
     dir = p->jumpDir;
-    p->position.x = p->posinitX + (int)lround((p->jumpRelX + 50.0) * dir);
+    p->position.x = p->posinitX + (int)lround((p->jumpRelX - GAME_JUMP_REL_MIN) * dir);
     p->position.y = p->posinit - (int)lround(p->jumpRelY);
 
-    if (now - game_last_jump_debug_tick >= 60u) {
-        printf("[JUMP] relX=%.2f relY=%.2f pos=(%d,%d) facing=%d up=%d\n",
-               p->jumpRelX, p->jumpRelY, p->position.x, p->position.y, p->facing, p->up);
-        fflush(stdout);
-        game_last_jump_debug_tick = now;
-    }
-
-    if (p->jumpProgress >= 1.0) {
-        p->jumpRelX = -50.0;
+    if (p->jumpRelX >= GAME_JUMP_REL_MAX || p->position.y >= p->posinit) {
+        p->jumpRelX = GAME_JUMP_REL_MIN;
         p->jumpRelY = 0.0;
         p->jumpProgress = 0.0;
         p->up = 0; /* fin du saut */
         p->jumpPhase = 0;
         p->moving = 0;
         p->position.y = p->groundY;
-        printf("[JUMP] end pos=(%d,%d)\n", p->position.x, p->position.y);
-        fflush(stdout);
         game_set_movement(p, GAME_MOVE_STOP, now);
     }
 }
 
-static int game_trigger_character_damage(Personnage *p, Uint32 now) {
+static int game_trigger_character_damage(Game *game, Personnage *p, int owner, Uint32 now) {
     if (!p) return 0;
     if (p->damageActive || now < p->damageInvulnUntil) return 0;
 
@@ -2204,6 +2596,9 @@ static int game_trigger_character_damage(Personnage *p, Uint32 now) {
     p->pendingJump = 0;
     p->moving = 0;
     p->position.y = p->groundY;
+    if (game) {
+        game_trigger_minimap_spark(owner, p->position, p->facing, now);
+    }
     game_set_movement(p, GAME_MOVE_DAMAGE, now);
     return 1;
 }
@@ -2285,7 +2680,10 @@ static void game_move_animation(Personnage *p, Uint32 now) {
 static void game_update_character_controls(Personnage *p, int left_pressed, int right_pressed,
                                            int jump_pressed, int run_modifier,
                                            int walk_step, int run_step,
-                                           Uint32 dt, Uint32 now) {
+                                           Uint32 dt, Uint32 now,
+                                           int owner_index) {
+    int hit_border = 0;
+
     if (!p) return;
 
     if (game_update_damage_state(p, now)) {
@@ -2318,10 +2716,28 @@ static void game_update_character_controls(Personnage *p, int left_pressed, int 
         }
     }
 
-    if (p->position.x < 0) p->position.x = 0;
-    if (p->position.x + p->position.w > WIDTH) p->position.x = WIDTH - p->position.w;
-    if (p->position.y < 0) p->position.y = 0;
-    if (p->position.y > p->groundY) p->position.y = p->groundY;
+    if (p->position.x < 0) {
+        p->position.x = 0;
+        hit_border = 1;
+    }
+    if (p->position.x + p->position.w > WIDTH) {
+        p->position.x = WIDTH - p->position.w;
+        hit_border = 1;
+    }
+    if (p->position.y < 0) {
+        p->position.y = 0;
+        hit_border = 1;
+    }
+    if (p->position.y > p->groundY) {
+        p->position.y = p->groundY;
+        hit_border = 1;
+    }
+
+    if (hit_border && owner_index >= 0 && owner_index < 2 &&
+        now >= game_minimap_border_cooldown[owner_index]) {
+        game_trigger_minimap_spark(owner_index, p->position, p->facing, now);
+        game_minimap_border_cooldown[owner_index] = now + 180u;
+    }
     game_move_animation(p, now);
 }
 
@@ -2480,10 +2896,104 @@ static void game_init_obstacle(GameObstacle *obs, SDL_Texture *texture,
     obs->phase = (double)(rand() % 628) / 100.0;
 }
 
-static void game_reset_enemy_obstacles(Game *game) {
-    int ground_line;
+static SDL_Texture *game_enemy_texture_for_state(GameEnemy *enemy, int animation_state) {
+    if (!enemy) return NULL;
+    if (animation_state == GAME_ENEMY_ANIM_RUN && enemy->runTexture) return enemy->runTexture;
+    if (animation_state == GAME_ENEMY_ANIM_WALK && enemy->walkTexture) return enemy->walkTexture;
+    if (animation_state == GAME_ENEMY_ANIM_STAND && enemy->standTexture) return enemy->standTexture;
+    if (enemy->standTexture) return enemy->standTexture;
+    if (enemy->walkTexture) return enemy->walkTexture;
+    if (enemy->runTexture) return enemy->runTexture;
+    return enemy->texture;
+}
+
+static Uint32 game_enemy_frame_delay(int animation_state) {
+    if (animation_state == GAME_ENEMY_ANIM_RUN) return GAME_ENEMY_RUN_FRAME_MS;
+    if (animation_state == GAME_ENEMY_ANIM_WALK) return GAME_ENEMY_WALK_FRAME_MS;
+    return GAME_ENEMY_STAND_FRAME_MS;
+}
+
+static void game_enemy_refresh_frame_geometry(GameEnemy *enemy) {
     int tex_w = 0;
     int tex_h = 0;
+
+    if (!enemy) return;
+
+    enemy->nbCols = GAME_ENEMY_SHEET_COLS;
+    enemy->nbRows = GAME_ENEMY_SHEET_ROWS;
+    enemy->frameWidth = 1;
+    enemy->frameHeight = 1;
+
+    if (enemy->texture &&
+        SDL_QueryTexture(enemy->texture, NULL, NULL, &tex_w, &tex_h) == 0 &&
+        tex_w > 0 && tex_h > 0) {
+        enemy->frameWidth = tex_w / GAME_ENEMY_SHEET_COLS;
+        enemy->frameHeight = tex_h / GAME_ENEMY_SHEET_ROWS;
+        if (enemy->frameWidth < 1) enemy->frameWidth = tex_w;
+        if (enemy->frameHeight < 1) enemy->frameHeight = tex_h;
+    }
+    enemy->sprite = (SDL_Rect){0, 0, enemy->frameWidth, enemy->frameHeight};
+}
+
+static void game_enemy_update_sprite(GameEnemy *enemy) {
+    SDL_Rect src;
+    int frame_count;
+    int frame;
+
+    if (!enemy) return;
+
+    frame_count = enemy->nbCols * enemy->nbRows;
+    if (frame_count < 1) frame_count = 1;
+    frame = enemy->frame % frame_count;
+    if (frame < 0) frame += frame_count;
+
+    if (game_get_sprite_frame(enemy->texture, frame, &src)) {
+        enemy->sprite = src;
+        return;
+    }
+
+    enemy->sprite = (SDL_Rect){
+        (frame % enemy->nbCols) * enemy->frameWidth,
+        (frame / enemy->nbCols) * enemy->frameHeight,
+        enemy->frameWidth,
+        enemy->frameHeight
+    };
+}
+
+static void game_enemy_set_animation(GameEnemy *enemy, int animation_state, Uint32 now) {
+    SDL_Texture *next_texture;
+
+    if (!enemy) return;
+
+    next_texture = game_enemy_texture_for_state(enemy, animation_state);
+    if (!next_texture) {
+        enemy->active = 0;
+        return;
+    }
+
+    if (enemy->texture != next_texture || enemy->animationState != animation_state) {
+        enemy->texture = next_texture;
+        enemy->animationState = animation_state;
+        enemy->frame = 0;
+        enemy->lastFrameTick = now;
+        game_enemy_refresh_frame_geometry(enemy);
+    }
+    enemy->active = 1;
+    game_enemy_update_sprite(enemy);
+}
+
+static void game_draw_enemy_sprite(SDL_Renderer *renderer, const GameEnemy *enemy,
+                                   SDL_Rect dst_rect) {
+    SDL_RendererFlip flip;
+
+    if (!renderer || !enemy || !enemy->texture || dst_rect.w <= 0 || dst_rect.h <= 0) return;
+
+    flip = (enemy->direction == GAME_OBSTACLE_LEFT) ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE;
+    game_draw_normalized_frame_flip(renderer, enemy->texture, enemy->sprite, dst_rect, flip);
+}
+
+static void game_reset_enemy_obstacles(Game *game) {
+    int ground_line;
 
     if (!game) return;
 
@@ -2491,34 +3001,26 @@ static void game_reset_enemy_obstacles(Game *game) {
     if (ground_line <= 0) ground_line = GAME_MONO_GROUND_LINE_Y;
 
     memset(&game->gameEnemy, 0, sizeof(game->gameEnemy));
-    game->gameEnemy.texture = game->gameEnemyTex;
-    game->gameEnemy.active = (game->gameEnemyTex != NULL);
-    game->gameEnemy.nbCols = GAME_ENEMY_SHEET_COLS;
-    game->gameEnemy.nbRows = GAME_ENEMY_SHEET_ROWS;
-    game->gameEnemy.frameWidth = 1;
-    game->gameEnemy.frameHeight = 1;
-    if (game->gameEnemyTex &&
-        SDL_QueryTexture(game->gameEnemyTex, NULL, NULL, &tex_w, &tex_h) == 0 &&
-        tex_w > 0 && tex_h > 0) {
-        game->gameEnemy.frameWidth = tex_w / GAME_ENEMY_SHEET_COLS;
-        game->gameEnemy.frameHeight = tex_h / GAME_ENEMY_SHEET_ROWS;
-        if (game->gameEnemy.frameWidth < 1) game->gameEnemy.frameWidth = tex_w;
-        if (game->gameEnemy.frameHeight < 1) game->gameEnemy.frameHeight = tex_h;
-    }
-    game->gameEnemy.sprite = (SDL_Rect){0, 0, game->gameEnemy.frameWidth,
-                                        game->gameEnemy.frameHeight};
+    game->gameEnemy.standTexture = game->gameEnemyStandTex ? game->gameEnemyStandTex : game->gameEnemyTex;
+    game->gameEnemy.walkTexture = game->gameEnemyWalkTex ? game->gameEnemyWalkTex : game->gameEnemy.standTexture;
+    game->gameEnemy.runTexture = game->gameEnemyRunTex ? game->gameEnemyRunTex : game->gameEnemy.walkTexture;
+    game->gameEnemy.texture = game_enemy_texture_for_state(&game->gameEnemy,
+                                                           GAME_ENEMY_ANIM_STAND);
+    game->gameEnemy.active = (game->gameEnemy.texture != NULL);
     game->gameEnemy.position = (SDL_Rect){WIDTH - 360,
                                           ground_line - GAME_ENEMY_BOX_H,
                                           GAME_ENEMY_BOX_W,
                                           GAME_ENEMY_BOX_H};
     game->gameEnemy.direction = GAME_OBSTACLE_RIGHT;
+    game->gameEnemy.animationState = GAME_ENEMY_ANIM_STAND;
     game->gameEnemy.lastFrameTick = SDL_GetTicks();
+    game_enemy_refresh_frame_geometry(&game->gameEnemy);
+    game_enemy_update_sprite(&game->gameEnemy);
 
-    game_init_obstacle(&game->gameObstacles[0], game->gameSpiderTex,
+    game_init_obstacle(&game->gameObstacles[0], NULL,
                        330, ground_line - 96, 96, 96, 2);
-    game_init_obstacle(&game->gameObstacles[1], game->gameFallingTex,
+    game_init_obstacle(&game->gameObstacles[1], NULL,
                        800, ground_line - 150, 108, 108, 3);
-    game->gameObstacles[1].amplitude += 18.0;
 }
 
 static void game_update_enemy(Game *game, Uint32 dt, Uint32 now) {
@@ -2528,8 +3030,11 @@ static void game_update_enemy(Game *game, Uint32 dt, Uint32 now) {
     int moving_right = 0;
     int move_dir = 0;
     int nearest_player_backing_away = 0;
-    int speed;
+    int speed = 0;
     int step;
+    int animation_state = GAME_ENEMY_ANIM_STAND;
+    int frame_count;
+    Uint32 frame_delay;
     double enemy_center;
     double nearest_distance = 1000000.0;
 
@@ -2566,25 +3071,30 @@ static void game_update_enemy(Game *game, Uint32 dt, Uint32 now) {
         speed = (nearest_distance <= GAME_ENEMY_ALERT_DISTANCE)
             ? GAME_ENEMY_FLEE_SPEED
             : GAME_ENEMY_FOLLOW_SPEED;
+        animation_state = (speed >= GAME_ENEMY_FLEE_SPEED)
+            ? GAME_ENEMY_ANIM_RUN
+            : GAME_ENEMY_ANIM_WALK;
         step = (int)lround((double)speed * ((double)dt / 16.0));
         if (step < 1) step = 1;
         enemy->position.x += move_dir * step;
         enemy->direction = (move_dir > 0) ? GAME_OBSTACLE_RIGHT : GAME_OBSTACLE_LEFT;
+    }
 
-        if (now - enemy->lastFrameTick >= 90u) {
-            enemy->frame = (enemy->frame + 1) % enemy->nbCols;
-            enemy->lastFrameTick = now;
-        }
+    game_enemy_set_animation(enemy, animation_state, now);
+    if (!enemy->active || !enemy->texture) return;
+
+    frame_count = enemy->nbCols * enemy->nbRows;
+    if (frame_count < 1) frame_count = 1;
+    frame_delay = game_enemy_frame_delay(enemy->animationState);
+    if (now - enemy->lastFrameTick >= frame_delay) {
+        enemy->frame = (enemy->frame + 1) % frame_count;
+        enemy->lastFrameTick = now;
     }
 
     enemy->position.x = game_clampi(enemy->position.x, 0, WIDTH - enemy->position.w);
     enemy->position.y = game->gameCharacter.groundY + game->gameCharacter.position.h - enemy->position.h;
     if (enemy->position.y < 0) enemy->position.y = 0;
-    enemy->sprite.x = enemy->frame * enemy->frameWidth;
-    enemy->sprite.y = enemy->direction * enemy->frameHeight;
-    if (enemy->sprite.y + enemy->sprite.h > enemy->frameHeight * enemy->nbRows) {
-        enemy->sprite.y = 0;
-    }
+    game_enemy_update_sprite(enemy);
 }
 
 static void game_update_obstacle_motion(GameObstacle *obs, Uint32 dt, int ground_line) {
@@ -2620,7 +3130,10 @@ static void game_update_obstacle_player_collision(Game *game, GameObstacle *obs,
 
     colliding = game_collision_trigonometric(player->position, obs->position);
     if (colliding) {
-        if (!*colliding_flag && game_trigger_character_damage(player, now) &&
+        if (!*colliding_flag &&
+            game_trigger_character_damage(game, player,
+                                          (player == &game->gameCharacter2) ? 1 : 0,
+                                          now) &&
             game->gameObstacleHitSound) {
             Mix_PlayChannel(-1, game->gameObstacleHitSound, 0);
         }
@@ -2645,10 +3158,39 @@ static void game_update_world_hazards_motion(Game *game, Uint32 dt, Uint32 now) 
     }
 }
 
+static void game_update_enemy_player_minimap_collision(Game *game, Personnage *player,
+                                                       int owner_index, Uint32 now) {
+    int colliding;
+
+    if (!game || !player) return;
+    if (owner_index < 0 || owner_index > 1) return;
+    if (!game->gameEnemy.active || !game->gameEnemy.texture) {
+        game_enemy_collision_latch[owner_index] = 0;
+        return;
+    }
+
+    colliding = game_collision_trigonometric(player->position, game->gameEnemy.position);
+    if (colliding) {
+        if (!game_enemy_collision_latch[owner_index]) {
+            game_trigger_minimap_spark(owner_index, player->position, player->facing, now);
+            game_enemy_collision_latch[owner_index] = 1;
+        }
+    } else {
+        game_enemy_collision_latch[owner_index] = 0;
+    }
+}
+
 static void game_update_world_hazards(Game *game, Uint32 dt, Uint32 now) {
     if (!game) return;
 
     game_update_world_hazards_motion(game, dt, now);
+    game_update_enemy_player_minimap_collision(game, &game->gameCharacter, 0, now);
+    if (game->player_mode != 1) {
+        game_update_enemy_player_minimap_collision(game, &game->gameCharacter2, 1, now);
+    } else {
+        game_enemy_collision_latch[1] = 0;
+    }
+
     for (int i = 0; i < GAME_OBSTACLE_COUNT; i++) {
         GameObstacle *obs = &game->gameObstacles[i];
         game_update_obstacle_player_collision(game, obs, &game->gameCharacter,
@@ -2673,26 +3215,20 @@ static void game_render_world_hazards(Game *game, SDL_Renderer *renderer) {
     }
 
     if (game->gameEnemy.active && game->gameEnemy.texture) {
-        SDL_RenderCopy(renderer, game->gameEnemy.texture, &game->gameEnemy.sprite,
-                       &game->gameEnemy.position);
+        game_draw_enemy_sprite(renderer, &game->gameEnemy, game->gameEnemy.position);
     }
 }
 
-static void game_draw_world_texture_in_panel(SDL_Renderer *renderer,
-                                             SDL_Texture *texture,
-                                             const SDL_Rect *src,
-                                             SDL_Rect world_rect,
-                                             SDL_Rect viewport,
-                                             double scale,
-                                             int panel_ground_line_y,
-                                             int world_ground_line) {
+static SDL_Rect game_world_rect_to_panel_rect(SDL_Rect world_rect,
+                                              SDL_Rect viewport,
+                                              double scale,
+                                              int panel_ground_line_y,
+                                              int world_ground_line) {
     SDL_Rect dst;
     int world_span;
     int viewport_span;
     int bottom_offset;
     double x_scale;
-
-    if (!renderer || !texture) return;
 
     dst.w = (int)lround((double)world_rect.w * scale);
     dst.h = (int)lround((double)world_rect.h * scale);
@@ -2710,7 +3246,39 @@ static void game_draw_world_texture_in_panel(SDL_Renderer *renderer,
     if (bottom_offset < 0) bottom_offset = 0;
     dst.y = panel_ground_line_y - dst.h - (int)lround((double)bottom_offset * scale);
 
+    return dst;
+}
+
+static void game_draw_world_texture_in_panel(SDL_Renderer *renderer,
+                                             SDL_Texture *texture,
+                                             const SDL_Rect *src,
+                                             SDL_Rect world_rect,
+                                             SDL_Rect viewport,
+                                             double scale,
+                                             int panel_ground_line_y,
+                                             int world_ground_line) {
+    SDL_Rect dst;
+
+    if (!renderer || !texture) return;
+
+    dst = game_world_rect_to_panel_rect(world_rect, viewport, scale,
+                                        panel_ground_line_y, world_ground_line);
     SDL_RenderCopy(renderer, texture, src, &dst);
+}
+
+static void game_draw_enemy_in_panel(SDL_Renderer *renderer,
+                                     const GameEnemy *enemy,
+                                     SDL_Rect viewport,
+                                     double scale,
+                                     int panel_ground_line_y,
+                                     int world_ground_line) {
+    SDL_Rect dst;
+
+    if (!renderer || !enemy || !enemy->active || !enemy->texture) return;
+
+    dst = game_world_rect_to_panel_rect(enemy->position, viewport, scale,
+                                        panel_ground_line_y, world_ground_line);
+    game_draw_enemy_sprite(renderer, enemy, dst);
 }
 
 static void game_render_hazards_in_panel(Game *game, SDL_Renderer *renderer,
@@ -2734,12 +3302,10 @@ static void game_render_hazards_in_panel(Game *game, SDL_Renderer *renderer,
     }
 
     if (game->gameEnemy.active && game->gameEnemy.texture) {
-        game_draw_world_texture_in_panel(renderer, game->gameEnemy.texture,
-                                         &game->gameEnemy.sprite,
-                                         game->gameEnemy.position,
-                                         viewport, scale,
-                                         panel_ground_line_y,
-                                         world_ground_line);
+        game_draw_enemy_in_panel(renderer, &game->gameEnemy,
+                                 viewport, scale,
+                                 panel_ground_line_y,
+                                 world_ground_line);
     }
 }
 
@@ -2772,30 +3338,38 @@ static void duo_update_runtime(Game *game, Uint32 dt, Uint32 now) {
 
     p1_left = game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_DOWN]);
     p1_right = game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_WALK]);
-    p1_jump = game->gameCharacter.pendingJump ||
-              game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_JUMP]) ||
-              game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_DANCE]);
+    p1_jump = game->gameCharacter.pendingJump;
     p1_run = game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_RUN]);
 
     p2_left = game_key_pressed(keys, game->keyBindings[1][KEY_ACTION_DOWN]);
     p2_right = game_key_pressed(keys, game->keyBindings[1][KEY_ACTION_WALK]);
-    p2_jump = game->gameCharacter2.pendingJump ||
-              game_key_pressed(keys, game->keyBindings[1][KEY_ACTION_JUMP]) ||
-              game_key_pressed(keys, game->keyBindings[1][KEY_ACTION_DANCE]);
+    p2_jump = game->gameCharacter2.pendingJump;
     p2_run = game_key_pressed(keys, game->keyBindings[1][KEY_ACTION_RUN]);
+    if (game_player_uses_mouse(game, 0)) {
+        game_mouse_direction_for_rect(game->gameCharacter.position,
+                                      &p1_left,
+                                      &p1_right,
+                                      &p1_run);
+    }
+    if (game_player_uses_mouse(game, 1)) {
+        game_mouse_direction_for_rect(game->gameCharacter2.position,
+                                      &p2_left,
+                                      &p2_right,
+                                      &p2_run);
+    }
 
     game_update_character_controls(&game->gameCharacter,
                                    p1_left,
                                    p1_right,
                                    p1_jump,
                                    p1_run,
-                                   walk_step, run_step, dt, now);
+                                   walk_step, run_step, dt, now, 0);
     game_update_character_controls(&game->gameCharacter2,
                                    p2_left,
                                    p2_right,
                                    p2_jump,
                                    p2_run,
-                                   walk_step, run_step, dt, now);
+                                   walk_step, run_step, dt, now, 1);
 }
 
 static double duo_panel_scale(SDL_Rect viewport) {
@@ -2961,20 +3535,15 @@ int Game_Charger(Game *game, SDL_Renderer *renderer) {
         game->startPlayer2LifeTex = IMG_LoadTexture(renderer, "characters/second_player_icon_life.png");
     if (!game->gameBgTex)
         game->gameBgTex = IMG_LoadTexture(renderer, GAME_ASSETS.backgrounds.main);
+    if (!game->gamesLoaded)
+        Games_Charger(game, renderer);
     if (!game->miniMapFrameTex)
         game->miniMapFrameTex = IMG_LoadTexture(renderer, "backgrounds/cadre_mini_map.png");
     if (!game->miniMapLockClosedTex)
         game->miniMapLockClosedTex = IMG_LoadTexture(renderer, "buttons/ferme_lock_1.png");
     if (!game->miniMapLockOpenTex)
         game->miniMapLockOpenTex = IMG_LoadTexture(renderer, "buttons/ouvert_lock_2.png");
-    if (!game->gameEnemyTex)
-        game->gameEnemyTex = IMG_LoadTexture(renderer, "enemyobtacle/enemy.png");
-    if (!game->gameSpiderTex)
-        game->gameSpiderTex = IMG_LoadTexture(renderer, "enemyobtacle/spider.png");
-    if (!game->gameFallingTex)
-        game->gameFallingTex = IMG_LoadTexture(renderer, "enemyobtacle/falling.png");
-    if (!game->gameObstacleHitSound)
-        game->gameObstacleHitSound = Mix_LoadWAV("enemyobtacle/sound.wav");
+    game_load_enemy_textures(game, renderer);
 
     game_destroy_character_textures(&game->gameCharacter);
     game_destroy_character_textures(&game->gameCharacter2);
@@ -2992,6 +3561,12 @@ int Game_Charger(Game *game, SDL_Renderer *renderer) {
     }
     duoStartTime = SDL_GetTicks();
     game_reset_enemy_obstacles(game);
+    game_minimap_spark.active = 0;
+    game_minimap_spark.frame = 0;
+    game_minimap_border_cooldown[0] = 0u;
+    game_minimap_border_cooldown[1] = 0u;
+    game_enemy_collision_latch[0] = 0;
+    game_enemy_collision_latch[1] = 0;
     game_minimap_layout_initialized = 0;
     game_minimap_drag_unlocked = 0;
     game_minimap_dragging = 0;
@@ -2999,6 +3574,8 @@ int Game_Charger(Game *game, SDL_Renderer *renderer) {
     game_minimap_drag_offset_y = 0;
     game_minimap_ensure_layout();
     game->gameLastTick = SDL_GetTicks();
+    game_enigme_intro_tick = game->gameLastTick + GAME_ENIGME_INTRO_DELAY_MS;
+    game_enigme_intro_shown = 0;
     game->gameLoaded = 1;
     printf("[GAME] loaded. Custom key bindings enabled.\n");
     fflush(stdout);
@@ -3016,17 +3593,35 @@ void Game_LectureEntree(Game *game) {
         if (game_handle_minimap_mouse_event(&e)) {
             continue;
         }
+        if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+            int owner = game_mouse_owner(game);
+            if (owner == 0) {
+                game->gameCharacter.pendingJump = 1;
+                continue;
+            }
+            if (owner == 1 && game->player_mode != 1) {
+                game->gameCharacter2.pendingJump = 1;
+                continue;
+            }
+        }
         if (e.type == SDL_KEYDOWN) {
             SDL_Keycode sym = e.key.keysym.sym;
             SDL_Scancode scan = e.key.keysym.scancode;
-            if (sym == SDLK_z || sym == SDLK_KP_PLUS || sym == SDLK_EQUALS) {
+            int is_player_jump_key = 0;
+            if (scan == game->keyBindings[0][KEY_ACTION_JUMP]) is_player_jump_key = 1;
+            if (game->player_mode != 1 &&
+                scan == game->keyBindings[1][KEY_ACTION_JUMP]) is_player_jump_key = 1;
+
+            if (!is_player_jump_key &&
+                (sym == SDLK_z || sym == SDLK_KP_PLUS || sym == SDLK_EQUALS)) {
                 game->minimap_zoom += GAME_MINIMAP_ZOOM_STEP;
                 if (game->minimap_zoom > GAME_MINIMAP_ZOOM_MAX) {
                     game->minimap_zoom = GAME_MINIMAP_ZOOM_MAX;
                 }
                 continue;
             }
-            if (sym == SDLK_x || sym == SDLK_KP_MINUS || sym == SDLK_MINUS) {
+            if (!is_player_jump_key &&
+                (sym == SDLK_x || sym == SDLK_KP_MINUS || sym == SDLK_MINUS)) {
                 game->minimap_zoom -= GAME_MINIMAP_ZOOM_STEP;
                 if (game->minimap_zoom < GAME_MINIMAP_ZOOM_MIN) {
                     game->minimap_zoom = GAME_MINIMAP_ZOOM_MIN;
@@ -3040,21 +3635,16 @@ void Game_LectureEntree(Game *game) {
                 return;
             }
             if (game->player_mode != 1) {
-                if (scan == game->keyBindings[0][KEY_ACTION_JUMP] ||
-                    scan == game->keyBindings[0][KEY_ACTION_DANCE]) {
+                if (scan == game->keyBindings[0][KEY_ACTION_JUMP]) {
                     game->gameCharacter.pendingJump = 1;
                 }
-                if (scan == game->keyBindings[1][KEY_ACTION_JUMP] ||
-                    scan == game->keyBindings[1][KEY_ACTION_DANCE]) {
+                if (scan == game->keyBindings[1][KEY_ACTION_JUMP]) {
                     game->gameCharacter2.pendingJump = 1;
                 }
                 continue;
             }
-            if (scan == game->keyBindings[0][KEY_ACTION_JUMP] ||
-                scan == game->keyBindings[0][KEY_ACTION_DANCE]) {
+            if (scan == game->keyBindings[0][KEY_ACTION_JUMP]) {
                 game->gameCharacter.pendingJump = 1;
-                printf("[INPUT] jump key pressed: %s\n", SDL_GetKeyName(sym));
-                fflush(stdout);
             }
         }
     }
@@ -3077,6 +3667,19 @@ void Game_MiseAJour(Game *game) {
     now = SDL_GetTicks();
     dt = (game->gameLastTick == 0) ? 16u : (now - game->gameLastTick);
     game->gameLastTick = now;
+    game_update_minimap_spark(now);
+
+    if (!game_enigme_intro_shown &&
+        game_enigme_intro_tick != 0 &&
+        now >= game_enigme_intro_tick) {
+        game_enigme_intro_shown = 1;
+        game_enigme_intro_tick = 0;
+        game->gameLastTick = now;
+        games_reset_menu_state();
+        Game_SetSubState(game, STATE_ENIGME);
+        SDL_Delay(16);
+        return;
+    }
 
     if (game->player_mode != 1) {
         duo_update_runtime(game, dt, now);
@@ -3093,10 +3696,14 @@ void Game_MiseAJour(Game *game) {
 
     left_pressed = game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_DOWN]);
     right_pressed = game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_WALK]);
-    jump_pressed = game->gameCharacter.pendingJump ||
-                   game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_JUMP]) ||
-                   game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_DANCE]);
+    jump_pressed = game->gameCharacter.pendingJump;
     run_modifier = game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_RUN]);
+    if (game_player_uses_mouse(game, 0)) {
+        game_mouse_direction_for_rect(game->gameCharacter.position,
+                                      &left_pressed,
+                                      &right_pressed,
+                                      &run_modifier);
+    }
 
     game_jump_latch = jump_pressed;
     game_update_character_controls(&game->gameCharacter,
@@ -3104,7 +3711,7 @@ void Game_MiseAJour(Game *game) {
                                    right_pressed,
                                    jump_pressed,
                                    run_modifier,
-                                   walk_step, run_step, dt, now);
+                                   walk_step, run_step, dt, now, 0);
     game_update_world_hazards(game, dt, now);
 
     SDL_Delay(16);
@@ -3241,14 +3848,116 @@ void Game_Affichage(Game *game, SDL_Renderer *renderer) {
     game_render_minimap_overlay(game, renderer, 0, solo_tex, NULL);
 }
 
-static SDL_Rect quizBtnARect = {120, 430, 150, 120};
-static SDL_Rect quizBtnBRect = {325, 430, 150, 120};
-static SDL_Rect quizBtnCRect = {530, 430, 150, 120};
+typedef struct {
+    const char *question;
+    const char *answers[3];
+    int correct;
+} ImportedQuizQuestion;
+
+static const ImportedQuizQuestion quizQuestions[] = {
+    {"Quel objet Kevin met-il sur la poignee pour bruler Harry ?",
+     {"Bouilloire", "Fer a repasser", "Radiateur"}, 1},
+    {"Dans quel film apparait Kevin McCallister ?",
+     {"Maman j'ai rate l'avion", "Gremlins", "Hook"}, 0},
+    {"Quel acteur joue Kevin dans Maman j'ai rate l'avion ?",
+     {"Macaulay Culkin", "Haley Joel Osment", "Jake Lloyd"}, 0},
+    {"Comment s'appelle le duo de cambrioleurs dans le film ?",
+     {"Les Bandits du Sud", "Les Bandits Mouilles", "Les Fantomes"}, 1},
+    {"Dans quelle ville se deroule l'action du premier film ?",
+     {"New York", "Chicago", "Los Angeles"}, 1},
+    {"Combien de freres et soeurs a Kevin dans le premier film ?",
+     {"2", "4", "6"}, 1},
+    {"Quel piege Kevin pose-t-il sur le sol du sous-sol ?",
+     {"De l'huile", "Des clous", "Du verre brise"}, 0},
+    {"Dans quel pays la famille de Kevin devait partir en vacances ?",
+     {"France", "Mexique", "Italie"}, 0},
+    {"Quel voisin aide Kevin a la fin du premier film ?",
+     {"Le facteur", "Le vieux Marley", "Le policier"}, 1},
+    {"Quel est le prenom de la mere de Kevin ?",
+     {"Kate", "Julie", "Susan"}, 0},
+    {"Combien de fois Kevin crie-t-il en se mettant de l'apres-rasage ?",
+     {"1", "2", "3"}, 1},
+    {"Quel est le nom de famille de Kevin ?",
+     {"Miller", "McCallister", "Johnson"}, 1},
+    {"Ou la famille de Kevin part-elle en vacances dans le 2eme film ?",
+     {"Paris", "Miami", "New York"}, 2},
+    {"Quel acteur joue le cambrioleur Harry ?",
+     {"Joe Pesci", "Daniel Stern", "John Candy"}, 0},
+    {"Quel acteur joue le cambrioleur Marv ?",
+     {"Joe Pesci", "Daniel Stern", "Rob Schneider"}, 1},
+    {"Quel est le surnom donne aux deux cambrioleurs ?",
+     {"Les Bandits de Noel", "Les Bandits Mouilles", "Les Voleurs du Soir"}, 1},
+    {"Comment Kevin commande-t-il sa pizza au debut du film ?",
+     {"Par courrier", "Par telephone", "En personne"}, 1},
+    {"Quel film Kevin regarde-t-il seul a la maison ?",
+     {"Freddy", "Angels with Filthy Souls", "Halloween"}, 1},
+    {"Quelle est la reaction de Kevin quand il se retrouve seul ?",
+     {"Il pleure", "Il appelle la police", "Il crie de joie"}, 2},
+    {"Quel instrument joue le voisin Marley dans le film ?",
+     {"Violon", "Piano", "Guitare"}, 0}
+};
+
+#define QUIZ_TIME_LIMIT_MS 15000u
+#define GAMES_MODE_MENU 0
+#define GAMES_MODE_QUIZ 1
+#define GAMES_MODE_PUZZLE 2
+#define PUZZLE_LEVEL_COUNT 2
+#define PUZZLE_PIECE_COUNT 3
+#define PUZZLE_TIME_LIMIT_MS 30000u
+
+typedef struct {
+    SDL_Rect dst;
+    SDL_Rect home;
+    int correct;
+    int dragging;
+    int ox;
+    int oy;
+} IntegratedPuzzlePiece;
+
+static SDL_Rect quizBtnARect = {120, 430, 150, 100};
+static SDL_Rect quizBtnBRect = {325, 430, 150, 100};
+static SDL_Rect quizBtnCRect = {530, 430, 150, 100};
+static SDL_Rect gamesMenuQuizRect = {330, 320, 220, 70};
+static SDL_Rect gamesMenuPuzzleRect = {730, 320, 220, 70};
+static int gamesMode = GAMES_MODE_MENU;
+static int gamesMenuHoverQuiz = 0;
+static int gamesMenuHoverPuzzle = 0;
 static int quizHoverA = 0, quizHoverB = 0, quizHoverC = 0;
 static int quizSelected = -1;
+static int quizTimedOut = 0;
+static int quizAnsweredWrong = 0;
+static int quizQuestionIndex = -1;
+static int quizAsked[50] = {0};
+static Uint32 quizQuestionStart = 0;
+static Uint32 quizAnswerTick = 0;
+static GameSubState quizReturnState = STATE_ENIGME;
+static IntegratedPuzzlePiece puzzlePieces[PUZZLE_PIECE_COUNT];
+static SDL_Rect puzzleImageRect = {0, 0, 0, 0};
+static SDL_Rect puzzleHoleRect = {0, 0, 0, 0};
+static int puzzleLevel = 0;
+static int puzzleSolved = 0;
+static int puzzleGameOver = 0;
+static int puzzleAnsweredWrong = 0;
+static int puzzleWrongFlash = 0;
+static Uint32 puzzleStartTick = 0;
+static Uint32 puzzleDoneTick = 0;
 
 static int point_in_rect(SDL_Rect r, int x, int y) {
     return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+static void games_reset_menu_state(void) {
+    gamesMode = GAMES_MODE_MENU;
+    gamesMenuHoverQuiz = 0;
+    gamesMenuHoverPuzzle = 0;
+    quizHoverA = quizHoverB = quizHoverC = 0;
+    quizSelected = -1;
+    quizTimedOut = 0;
+    quizAnsweredWrong = 0;
+    puzzleSolved = 0;
+    puzzleGameOver = 0;
+    puzzleAnsweredWrong = 0;
+    puzzleWrongFlash = 0;
 }
 
 static void draw_center_text(SDL_Renderer *renderer, TTF_Font *font, const char *text,
@@ -3270,6 +3979,237 @@ static void draw_center_text(SDL_Renderer *renderer, TTF_Font *font, const char 
     SDL_FreeSurface(surf);
 }
 
+static void draw_wrapped_center_text(SDL_Renderer *renderer, TTF_Font *font, const char *text,
+                                     SDL_Color color, SDL_Rect box) {
+    SDL_Surface *surf;
+    SDL_Texture *tex;
+    SDL_Rect dst;
+    Uint32 wrap_w;
+
+    if (!renderer || !font || !text || !*text || box.w <= 0 || box.h <= 0) return;
+
+    wrap_w = (Uint32)(box.w > 20 ? box.w - 20 : box.w);
+    surf = TTF_RenderUTF8_Blended_Wrapped(font, text, color, wrap_w);
+    if (!surf) return;
+
+    tex = SDL_CreateTextureFromSurface(renderer, surf);
+    if (tex) {
+        dst = (SDL_Rect){
+            box.x + (box.w - surf->w) / 2,
+            box.y + (box.h - surf->h) / 2,
+            surf->w,
+            surf->h
+        };
+        SDL_RenderCopy(renderer, tex, NULL, &dst);
+        SDL_DestroyTexture(tex);
+    }
+    SDL_FreeSurface(surf);
+}
+
+static int quiz_question_count(void) {
+    return (int)(sizeof(quizQuestions) / sizeof(quizQuestions[0]));
+}
+
+static void quiz_pick_question(void) {
+    int count = quiz_question_count();
+    int remaining = 0;
+
+    if (count <= 0) {
+        quizQuestionIndex = -1;
+        return;
+    }
+
+    for (int i = 0; i < count; i++) {
+        if (!quizAsked[i]) remaining++;
+    }
+    if (remaining == 0) {
+        for (int i = 0; i < count; i++) quizAsked[i] = 0;
+    }
+
+    do {
+        quizQuestionIndex = rand() % count;
+    } while (quizAsked[quizQuestionIndex]);
+
+    quizAsked[quizQuestionIndex] = 1;
+}
+
+static void games_begin_quiz(Game *game, GameSubState return_state) {
+    if (!game) return;
+
+    gamesMode = GAMES_MODE_QUIZ;
+    quiz_pick_question();
+    quizSelected = -1;
+    quizTimedOut = 0;
+    quizAnsweredWrong = 0;
+    quizHoverA = quizHoverB = quizHoverC = 0;
+    quizQuestionStart = SDL_GetTicks();
+    quizAnswerTick = 0;
+    quizReturnState = return_state;
+    if (game->quizMusic) {
+        Mix_VolumeMusic(40);
+        Mix_PlayMusic(game->quizMusic, -1);
+    }
+
+    Game_SetSubState(game, STATE_ENIGME_QUIZ);
+}
+
+static void games_finish_quiz(Game *game) {
+    if (!game) return;
+
+    games_reset_menu_state();
+    Mix_HaltMusic();
+    Game_SetSubState(game, quizReturnState);
+}
+
+static int puzzle_overlap(SDL_Rect a, SDL_Rect b) {
+    return !(a.x + a.w < b.x || b.x + b.w < a.x ||
+             a.y + a.h < b.y || b.y + b.h < a.y);
+}
+
+static void puzzle_setup_level(Game *game, int level) {
+    int order[PUZZLE_PIECE_COUNT] = {0, 1, 2};
+    int image_w = WIDTH - 360;
+    int image_h = HEIGHT - 150;
+    int piece_size = 140;
+
+    (void)game;
+    if (image_w < 520) image_w = 520;
+    if (image_h < 360) image_h = 360;
+
+    puzzleImageRect = (SDL_Rect){60, 90, image_w, image_h};
+
+    if (level == 0) {
+        puzzleHoleRect = (SDL_Rect){
+            puzzleImageRect.x + (int)lround((687.0 / 979.0) * puzzleImageRect.w),
+            puzzleImageRect.y + (int)lround((114.0 / 645.0) * puzzleImageRect.h),
+            (int)lround((98.0 / 979.0) * puzzleImageRect.w),
+            (int)lround((99.0 / 645.0) * puzzleImageRect.h)
+        };
+    } else {
+        puzzleHoleRect = (SDL_Rect){
+            puzzleImageRect.x + (int)lround((524.0 / 1196.0) * puzzleImageRect.w),
+            puzzleImageRect.y + (int)lround((371.0 / 896.0) * puzzleImageRect.h),
+            (int)lround((151.0 / 1196.0) * puzzleImageRect.w),
+            (int)lround((152.0 / 896.0) * puzzleImageRect.h)
+        };
+    }
+
+    if (puzzleHoleRect.w < 60) puzzleHoleRect.w = 60;
+    if (puzzleHoleRect.h < 60) puzzleHoleRect.h = 60;
+
+    for (int i = PUZZLE_PIECE_COUNT - 1; i > 0; i--) {
+        int j = rand() % (i + 1);
+        int tmp = order[i];
+        order[i] = order[j];
+        order[j] = tmp;
+    }
+
+    for (int i = 0; i < PUZZLE_PIECE_COUNT; i++) {
+        int piece_index = order[i];
+        puzzlePieces[piece_index].home = (SDL_Rect){
+            WIDTH - 205,
+            130 + i * 170,
+            piece_size,
+            piece_size
+        };
+        puzzlePieces[piece_index].dst = puzzlePieces[piece_index].home;
+        puzzlePieces[piece_index].correct = (piece_index == 0);
+        puzzlePieces[piece_index].dragging = 0;
+        puzzlePieces[piece_index].ox = 0;
+        puzzlePieces[piece_index].oy = 0;
+    }
+}
+
+static void games_begin_puzzle(Game *game, GameSubState return_state) {
+    if (!game) return;
+
+    gamesMode = GAMES_MODE_PUZZLE;
+    quizReturnState = return_state;
+    puzzleLevel = 0;
+    puzzleSolved = 0;
+    puzzleGameOver = 0;
+    puzzleAnsweredWrong = 0;
+    puzzleWrongFlash = 0;
+    puzzleStartTick = SDL_GetTicks();
+    puzzleDoneTick = 0;
+    puzzle_setup_level(game, puzzleLevel);
+    if (game->quizMusic) {
+        Mix_VolumeMusic(40);
+        Mix_PlayMusic(game->quizMusic, -1);
+    }
+    Game_SetSubState(game, STATE_ENIGME_QUIZ);
+}
+
+static void puzzle_handle_event(Game *game, const SDL_Event *e) {
+    if (!game || !e) return;
+
+    if (e->type == SDL_MOUSEBUTTONDOWN && e->button.button == SDL_BUTTON_LEFT) {
+        int mx = e->button.x;
+        int my = e->button.y;
+
+        if (puzzleAnsweredWrong) {
+            games_finish_quiz(game);
+            return;
+        }
+        if ((puzzleSolved && puzzleLevel == PUZZLE_LEVEL_COUNT - 1) || puzzleGameOver) {
+            games_finish_quiz(game);
+            return;
+        }
+        if (puzzleSolved || puzzleGameOver) return;
+
+        for (int i = PUZZLE_PIECE_COUNT - 1; i >= 0; i--) {
+            if (point_in_rect(puzzlePieces[i].dst, mx, my)) {
+                puzzlePieces[i].dragging = 1;
+                puzzlePieces[i].ox = mx - puzzlePieces[i].dst.x;
+                puzzlePieces[i].oy = my - puzzlePieces[i].dst.y;
+                return;
+            }
+        }
+    }
+
+    if (e->type == SDL_MOUSEMOTION && !puzzleSolved && !puzzleGameOver && !puzzleAnsweredWrong) {
+        for (int i = 0; i < PUZZLE_PIECE_COUNT; i++) {
+            if (puzzlePieces[i].dragging) {
+                puzzlePieces[i].dst.x = e->motion.x - puzzlePieces[i].ox;
+                puzzlePieces[i].dst.y = e->motion.y - puzzlePieces[i].oy;
+            }
+        }
+    }
+
+    if (e->type == SDL_MOUSEBUTTONUP && e->button.button == SDL_BUTTON_LEFT &&
+        !puzzleSolved && !puzzleGameOver && !puzzleAnsweredWrong) {
+        for (int i = 0; i < PUZZLE_PIECE_COUNT; i++) {
+            IntegratedPuzzlePiece *piece = &puzzlePieces[i];
+            if (!piece->dragging) continue;
+
+            piece->dragging = 0;
+            if (puzzle_overlap(piece->dst, puzzleHoleRect)) {
+                if (piece->correct) {
+                    piece->dst = puzzleHoleRect;
+                    puzzleSolved = 1;
+                    puzzleDoneTick = SDL_GetTicks();
+                    if (game->quizBeep2) Mix_PlayChannel(-1, game->quizBeep2, 0);
+                } else {
+                    piece->dst = piece->home;
+                    puzzleAnsweredWrong = 1;
+                    puzzleWrongFlash = 90;
+                    puzzleDoneTick = SDL_GetTicks();
+                    if (game->gameLoaded) {
+                        quizReturnState = STATE_GAME;
+                        game->gameLastTick = puzzleDoneTick;
+                    } else if (game->startPlayLoaded) {
+                        quizReturnState = STATE_START_PLAY;
+                        startPlayLastTick = puzzleDoneTick;
+                    }
+                    if (game->quizLaugh) Mix_PlayChannel(-1, game->quizLaugh, 0);
+                }
+            } else {
+                piece->dst = piece->home;
+            }
+        }
+    }
+}
+
 int Games_Charger(Game *game, SDL_Renderer *renderer) {
     if (game->gamesLoaded) return 1;
 
@@ -3278,6 +4218,14 @@ int Games_Charger(Game *game, SDL_Renderer *renderer) {
     game->quizBtnA = IMG_LoadTexture(renderer, QUIZ_BUTTON_A);
     game->quizBtnB = IMG_LoadTexture(renderer, QUIZ_BUTTON_B);
     game->quizBtnC = IMG_LoadTexture(renderer, QUIZ_BUTTON_C);
+    game->puzzlePictureTex[0] = IMG_LoadTexture(renderer, "picture1.png");
+    game->puzzlePictureTex[1] = IMG_LoadTexture(renderer, "picture2.png");
+    game->puzzlePieceTex[0][0] = IMG_LoadTexture(renderer, "correct1.png");
+    game->puzzlePieceTex[0][1] = IMG_LoadTexture(renderer, "wrong1.png");
+    game->puzzlePieceTex[0][2] = IMG_LoadTexture(renderer, "wrong11.png");
+    game->puzzlePieceTex[1][0] = IMG_LoadTexture(renderer, "correct2.png");
+    game->puzzlePieceTex[1][1] = IMG_LoadTexture(renderer, "wrong2.png");
+    game->puzzlePieceTex[1][2] = IMG_LoadTexture(renderer, "wrong22.png");
     game->quizMusic = Mix_LoadMUS(GAME_ASSETS.songs.quiz_music);
     game->quizBeep = Mix_LoadWAV(SOUND_QUIZ_BEEP_1);
     game->quizBeep2 = Mix_LoadWAV(SOUND_QUIZ_BEEP_2);
@@ -3286,12 +4234,10 @@ int Games_Charger(Game *game, SDL_Renderer *renderer) {
     if (!game->quizFont) game->quizFont = TTF_OpenFont(GAME_ASSETS.fonts.quiz_fallback, 26);
 
     quizSelected = -1;
-    quizHoverA = quizHoverB = quizHoverC = 0;
-
-    if (game->quizMusic) {
-        Mix_VolumeMusic(40);
-        Mix_PlayMusic(game->quizMusic, -1);
-    }
+    quizTimedOut = 0;
+    quizAnsweredWrong = 0;
+    quizQuestionIndex = -1;
+    games_reset_menu_state();
 
     game->gamesLoaded = 1;
     printf("Enigme/Quiz assets charges\n");
@@ -3307,11 +4253,26 @@ void Games_LectureEntree(Game *game) {
         }
 
         if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
-            Game_SetSubState(game, STATE_MENU);
+            if (game->currentSubState == STATE_ENIGME_QUIZ) {
+                games_finish_quiz(game);
+            } else {
+                Game_SetSubState(game, STATE_MENU);
+            }
             return;
         }
 
-        if (e.type == SDL_MOUSEMOTION && game->currentSubState == STATE_ENIGME_QUIZ) {
+        if (gamesMode == GAMES_MODE_PUZZLE) {
+            puzzle_handle_event(game, &e);
+            continue;
+        }
+
+        if (e.type == SDL_MOUSEMOTION && gamesMode == GAMES_MODE_MENU) {
+            int mx = e.motion.x, my = e.motion.y;
+            gamesMenuHoverQuiz = point_in_rect(gamesMenuQuizRect, mx, my);
+            gamesMenuHoverPuzzle = point_in_rect(gamesMenuPuzzleRect, mx, my);
+        }
+
+        if (e.type == SDL_MOUSEMOTION && gamesMode == GAMES_MODE_QUIZ) {
             int mx = e.motion.x, my = e.motion.y;
             quizHoverA = point_in_rect(quizBtnARect, mx, my);
             quizHoverB = point_in_rect(quizBtnBRect, mx, my);
@@ -3320,42 +4281,224 @@ void Games_LectureEntree(Game *game) {
 
         if (e.type == SDL_MOUSEBUTTONDOWN) {
             int mx = e.button.x, my = e.button.y;
-            if (game->currentSubState == STATE_ENIGME_QUIZ) {
+            if (gamesMode == GAMES_MODE_QUIZ) {
+                const ImportedQuizQuestion *q;
+                if (quizQuestionIndex < 0) quiz_pick_question();
+                if (quizQuestionIndex < 0) return;
+                q = &quizQuestions[quizQuestionIndex];
+
+                if (quizSelected != -1 || quizTimedOut) {
+                    games_finish_quiz(game);
+                    return;
+                }
+
                 if (point_in_rect(quizBtnARect, mx, my)) {
                     quizSelected = 0;
-                    if (game->quizBeep) Mix_PlayChannel(-1, game->quizBeep, 0);
-                    if (game->quizLaugh) Mix_PlayChannel(-1, game->quizLaugh, 0);
                 }
                 if (point_in_rect(quizBtnBRect, mx, my)) {
                     quizSelected = 1;
-                    if (game->quizBeep2) Mix_PlayChannel(-1, game->quizBeep2, 0);
                 }
                 if (point_in_rect(quizBtnCRect, mx, my)) {
                     quizSelected = 2;
-                    if (game->quizBeep) Mix_PlayChannel(-1, game->quizBeep, 0);
-                    if (game->quizLaugh) Mix_PlayChannel(-1, game->quizLaugh, 0);
+                }
+
+                if (quizSelected != -1) {
+                    quizAnswerTick = SDL_GetTicks();
+                    if (quizSelected == q->correct) {
+                        quizAnsweredWrong = 0;
+                        if (game->quizBeep2) Mix_PlayChannel(-1, game->quizBeep2, 0);
+                    } else {
+                        quizAnsweredWrong = 1;
+                        if (game->quizBeep) Mix_PlayChannel(-1, game->quizBeep, 0);
+                        if (game->quizLaugh) Mix_PlayChannel(-1, game->quizLaugh, 0);
+                    }
                 }
             } else {
-                Game_SetSubState(game, STATE_ENIGME_QUIZ);
+                if (point_in_rect(gamesMenuQuizRect, mx, my)) {
+                    games_begin_quiz(game, STATE_ENIGME);
+                } else if (point_in_rect(gamesMenuPuzzleRect, mx, my)) {
+                    games_begin_puzzle(game, STATE_ENIGME);
+                }
             }
         }
     }
 }
 
+static void games_draw_menu(Game *game, SDL_Renderer *renderer) {
+    TTF_Font *font;
+    SDL_Color white = {255, 255, 255, 255};
+    SDL_Color dark = {20, 24, 28, 255};
+    SDL_Color gold = {255, 214, 10, 255};
+    SDL_Rect quiz_rect = gamesMenuQuizRect;
+    SDL_Rect puzzle_rect = gamesMenuPuzzleRect;
+
+    if (!game || !renderer) return;
+
+    if (game->quizBg1) SDL_RenderCopy(renderer, game->quizBg1, NULL, NULL);
+    else {
+        SDL_SetRenderDrawColor(renderer, 35, 45, 52, 255);
+        SDL_RenderClear(renderer);
+    }
+
+    if (gamesMenuHoverQuiz) quiz_rect.y -= 4;
+    if (gamesMenuHoverPuzzle) puzzle_rect.y -= 4;
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 245, 245, 245, 220);
+    SDL_RenderFillRect(renderer, &quiz_rect);
+    SDL_RenderFillRect(renderer, &puzzle_rect);
+    SDL_SetRenderDrawColor(renderer, gold.r, gold.g, gold.b, gold.a);
+    SDL_RenderDrawRect(renderer, &quiz_rect);
+    SDL_RenderDrawRect(renderer, &puzzle_rect);
+
+    font = game->quizFont ? game->quizFont : game->font;
+    if (font) {
+        draw_center_text(renderer, font, "QUIZ", dark, quiz_rect);
+        draw_center_text(renderer, font, "PUZZLE", dark, puzzle_rect);
+        draw_center_text(renderer, font, "ENIGME", white, (SDL_Rect){100, 160, WIDTH - 200, 70});
+    }
+}
+
+static void puzzle_draw(Game *game, SDL_Renderer *renderer) {
+    TTF_Font *font;
+    Uint32 elapsed;
+    int remaining_ms;
+    int bar_w;
+    SDL_Rect bar_bg = {80, 34, WIDTH - 160, 18};
+    SDL_Rect bar_fg = bar_bg;
+    SDL_Rect panel = {WIDTH - 250, 80, 210, HEIGHT - 130};
+    SDL_Texture *picture_tex;
+
+    if (!game || !renderer) return;
+
+    if (game->quizBg2) SDL_RenderCopy(renderer, game->quizBg2, NULL, NULL);
+    else if (game->quizBg1) SDL_RenderCopy(renderer, game->quizBg1, NULL, NULL);
+
+    picture_tex = game->puzzlePictureTex[puzzleLevel];
+    if (picture_tex) {
+        SDL_RenderCopy(renderer, picture_tex, NULL, &puzzleImageRect);
+    } else {
+        SDL_SetRenderDrawColor(renderer, 28, 28, 32, 255);
+        SDL_RenderFillRect(renderer, &puzzleImageRect);
+    }
+
+    if (!puzzleSolved) {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderFillRect(renderer, &puzzleHoleRect);
+        SDL_SetRenderDrawColor(renderer, 255, 214, 10, 255);
+        SDL_RenderDrawRect(renderer, &puzzleHoleRect);
+    }
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 10, 10, 20, 200);
+    SDL_RenderFillRect(renderer, &panel);
+
+    for (int i = 0; i < PUZZLE_PIECE_COUNT; i++) {
+        SDL_Texture *tex = game->puzzlePieceTex[puzzleLevel][i];
+        if (puzzlePieces[i].dragging) {
+            SDL_Rect border = {
+                puzzlePieces[i].dst.x - 3,
+                puzzlePieces[i].dst.y - 3,
+                puzzlePieces[i].dst.w + 6,
+                puzzlePieces[i].dst.h + 6
+            };
+            SDL_SetRenderDrawColor(renderer, 255, 214, 10, 255);
+            SDL_RenderFillRect(renderer, &border);
+        }
+
+        if (tex) {
+            SDL_RenderCopy(renderer, tex, NULL, &puzzlePieces[i].dst);
+        } else {
+            SDL_SetRenderDrawColor(renderer, i == 0 ? 60 : 180, i == 0 ? 190 : 70, 90, 255);
+            SDL_RenderFillRect(renderer, &puzzlePieces[i].dst);
+        }
+    }
+
+    elapsed = SDL_GetTicks() - puzzleStartTick;
+    remaining_ms = (elapsed >= PUZZLE_TIME_LIMIT_MS) ? 0 : (int)(PUZZLE_TIME_LIMIT_MS - elapsed);
+    bar_w = (int)lround(((double)remaining_ms / (double)PUZZLE_TIME_LIMIT_MS) * (double)bar_bg.w);
+    if (bar_w < 0) bar_w = 0;
+    bar_fg.w = bar_w;
+
+    SDL_SetRenderDrawColor(renderer, 20, 20, 20, 190);
+    SDL_RenderFillRect(renderer, &bar_bg);
+    SDL_SetRenderDrawColor(renderer, 245, remaining_ms > 9000 ? 205 : 70, 45, 255);
+    SDL_RenderFillRect(renderer, &bar_fg);
+
+    font = game->quizFont ? game->quizFont : game->font;
+    if (font) {
+        SDL_Color white = {255, 255, 255, 255};
+        SDL_Color green = {50, 220, 80, 255};
+        SDL_Color red = {240, 40, 40, 255};
+        SDL_Color gold = {255, 214, 10, 255};
+        char title[64];
+
+        snprintf(title, sizeof(title), "PUZZLE %d/%d",
+                 puzzleLevel + 1, PUZZLE_LEVEL_COUNT);
+        draw_center_text(renderer, font, title, white, (SDL_Rect){80, 56, WIDTH - 160, 30});
+
+        if (puzzleWrongFlash > 0) {
+            draw_center_text(renderer, font, "WRONG!", red, (SDL_Rect){260, 285, 500, 80});
+        }
+        if (puzzleGameOver) {
+            draw_center_text(renderer, font, "TIME'S UP!", gold, (SDL_Rect){260, 285, 500, 80});
+        } else if (puzzleSolved && puzzleLevel == PUZZLE_LEVEL_COUNT - 1) {
+            draw_center_text(renderer, font, "PUZZLE OK!", green, (SDL_Rect){260, 285, 500, 80});
+        } else if (puzzleSolved) {
+            draw_center_text(renderer, font, "NEXT!", green, (SDL_Rect){260, 285, 500, 80});
+        }
+    }
+}
+
 void Games_Affichage(Game *game, SDL_Renderer *renderer) {
-    if (game->currentSubState == STATE_ENIGME_QUIZ) {
+    if (gamesMode == GAMES_MODE_PUZZLE) {
+        puzzle_draw(game, renderer);
+        return;
+    }
+
+    if (gamesMode == GAMES_MODE_QUIZ) {
+        const ImportedQuizQuestion *q;
+        TTF_Font *font;
+        Uint32 elapsed;
+        int remaining_ms;
+        int bar_w;
+        SDL_Rect bar_bg = {90, 54, WIDTH - 180, 18};
+        SDL_Rect bar_fg = bar_bg;
+
+        if (quizQuestionIndex < 0) quiz_pick_question();
+        if (quizQuestionIndex < 0) return;
+        q = &quizQuestions[quizQuestionIndex];
+        font = game->quizFont ? game->quizFont : game->font;
+
         if (game->quizBg2) SDL_RenderCopy(renderer, game->quizBg2, NULL, NULL);
         else if (game->quizBg1) SDL_RenderCopy(renderer, game->quizBg1, NULL, NULL);
 
-        if (game->quizFont) {
+        elapsed = SDL_GetTicks() - quizQuestionStart;
+        remaining_ms = (elapsed >= QUIZ_TIME_LIMIT_MS) ? 0 : (int)(QUIZ_TIME_LIMIT_MS - elapsed);
+        bar_w = (int)lround(((double)remaining_ms / (double)QUIZ_TIME_LIMIT_MS) * (double)bar_bg.w);
+        if (bar_w < 0) bar_w = 0;
+        bar_fg.w = bar_w;
+
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer, 20, 20, 20, 190);
+        SDL_RenderFillRect(renderer, &bar_bg);
+        SDL_SetRenderDrawColor(renderer, 245, remaining_ms > 5000 ? 205 : 70, 45, 255);
+        SDL_RenderFillRect(renderer, &bar_fg);
+
+        if (font) {
             SDL_Color black = {0, 0, 0, 255};
             SDL_Color white = {255, 255, 255, 255};
-            draw_center_text(renderer, game->quizFont,
-                             "QUEL OBJET KEVIN MET-IL SUR LA POIGNEE ?",
-                             black, (SDL_Rect){100, 70, WIDTH - 200, 70});
-            draw_center_text(renderer, game->quizFont,
-                             "A: Bouilloire   B: Fer a repasser   C: Radiateur",
-                             white, (SDL_Rect){50, 140, WIDTH - 100, 40});
+            SDL_Color soft = {255, 245, 210, 255};
+            draw_center_text(renderer, font, "QUIZ",
+                             white, (SDL_Rect){100, 78, WIDTH - 200, 36});
+            draw_wrapped_center_text(renderer, font, q->question,
+                                     black, (SDL_Rect){100, 120, WIDTH - 200, 95});
+            draw_wrapped_center_text(renderer, font, q->answers[0],
+                                     soft, (SDL_Rect){quizBtnARect.x - 25, 538, quizBtnARect.w + 50, 50});
+            draw_wrapped_center_text(renderer, font, q->answers[1],
+                                     soft, (SDL_Rect){quizBtnBRect.x - 25, 538, quizBtnBRect.w + 50, 50});
+            draw_wrapped_center_text(renderer, font, q->answers[2],
+                                     soft, (SDL_Rect){quizBtnCRect.x - 25, 538, quizBtnCRect.w + 50, 50});
         }
 
         SDL_Rect a = quizBtnARect, b = quizBtnBRect, c = quizBtnCRect;
@@ -3367,20 +4510,84 @@ void Games_Affichage(Game *game, SDL_Renderer *renderer) {
         if (game->quizBtnB) SDL_RenderCopy(renderer, game->quizBtnB, NULL, &b);
         if (game->quizBtnC) SDL_RenderCopy(renderer, game->quizBtnC, NULL, &c);
 
-        if (quizSelected != -1 && game->quizFont) {
-            SDL_Color col = (quizSelected == 1)
+        if ((quizSelected != -1 || quizTimedOut) && font) {
+            SDL_Color col = (!quizTimedOut && quizSelected == q->correct)
                 ? (SDL_Color){30, 220, 30, 255}
                 : (SDL_Color){240, 30, 30, 255};
-            const char *msg = (quizSelected == 1) ? "BRAVO ! Bonne reponse." : "FAUX ! Reessayez.";
-            draw_center_text(renderer, game->quizFont, msg, col, (SDL_Rect){120, 280, WIDTH - 240, 50});
+            const char *msg = quizTimedOut
+                ? "TEMPS ECOULE"
+                : ((quizSelected == q->correct) ? "BRAVO ! Bonne reponse." : "FAUX ! Mauvaise reponse.");
+            draw_center_text(renderer, font, msg, col, (SDL_Rect){120, 280, WIDTH - 240, 50});
         }
     } else {
-        if (game->quizBg1) SDL_RenderCopy(renderer, game->quizBg1, NULL, NULL);
+        games_draw_menu(game, renderer);
     }
 }
 
 void Games_MiseAJour(Game *game) {
-    (void)game;
+    Uint32 now;
+
+    if (!game) return;
+    if (gamesMode == GAMES_MODE_QUIZ) {
+        now = SDL_GetTicks();
+        if (quizSelected == -1 && !quizTimedOut &&
+            now - quizQuestionStart >= QUIZ_TIME_LIMIT_MS) {
+            quizTimedOut = 1;
+            quizAnsweredWrong = 1;
+            quizAnswerTick = now;
+            if (game->quizLaugh) Mix_PlayChannel(-1, game->quizLaugh, 0);
+        }
+        if ((quizSelected != -1 || quizTimedOut) && now - quizAnswerTick >= 1400u) {
+            if (quizAnsweredWrong && game->gameLoaded) {
+                quizReturnState = STATE_GAME;
+                game->gameLastTick = now;
+            } else if (quizAnsweredWrong && game->startPlayLoaded) {
+                quizReturnState = STATE_START_PLAY;
+                startPlayLastTick = now;
+            }
+            games_finish_quiz(game);
+            return;
+        }
+    }
+
+    if (gamesMode == GAMES_MODE_PUZZLE) {
+        now = SDL_GetTicks();
+        if (puzzleWrongFlash > 0) puzzleWrongFlash--;
+
+        if (puzzleAnsweredWrong) {
+            if (now - puzzleDoneTick >= 1300u) games_finish_quiz(game);
+            SDL_Delay(16);
+            return;
+        }
+
+        if (!puzzleSolved && !puzzleGameOver &&
+            now - puzzleStartTick >= PUZZLE_TIME_LIMIT_MS) {
+            puzzleGameOver = 1;
+            puzzleDoneTick = now;
+            if (game->quizLaugh) Mix_PlayChannel(-1, game->quizLaugh, 0);
+        }
+
+        if (puzzleGameOver) {
+            if (now - puzzleDoneTick >= 1600u) games_finish_quiz(game);
+            SDL_Delay(16);
+            return;
+        }
+
+        if (puzzleSolved && now - puzzleDoneTick >= 1300u) {
+            if (puzzleLevel + 1 < PUZZLE_LEVEL_COUNT) {
+                puzzleLevel++;
+                puzzleSolved = 0;
+                puzzleWrongFlash = 0;
+                puzzleStartTick = now;
+                puzzleDoneTick = 0;
+                puzzle_setup_level(game, puzzleLevel);
+            } else {
+                games_finish_quiz(game);
+                return;
+            }
+        }
+    }
+
     SDL_Delay(16);
 }
 

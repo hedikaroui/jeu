@@ -159,6 +159,10 @@ typedef enum {
     KEY_ACTION_COUNT
 } KeyAction;
 
+#define GAME_CONTROL_KEYBOARD 0
+#define GAME_CONTROL_CONTROLLER 1
+#define GAME_CONTROL_MOUSE 2
+
 typedef enum {
     GAME_MOVE_STOP = 0,
     GAME_MOVE_WALK,
@@ -191,6 +195,9 @@ typedef struct {
 
 typedef struct {
     SDL_Texture *texture;
+    SDL_Texture *standTexture;
+    SDL_Texture *walkTexture;
+    SDL_Texture *runTexture;
     SDL_Rect position;
     SDL_Rect sprite;
     int active;
@@ -200,6 +207,7 @@ typedef struct {
     int nbCols;
     int nbRows;
     int direction;
+    int animationState;
     Uint32 lastFrameTick;
 } GameEnemy;
 
@@ -409,6 +417,7 @@ typedef struct {
     int duo_display_mode;     /* 0: same screen, 1: vertical split, 2: horizontal split */
     int duo_background_mode;  /* 0: fixed background, 1: scrolling background */
     float minimap_zoom;       /* mini-map zoom factor (0.5 -> 2.0) */
+    int playerControls[2];    /* GAME_CONTROL_* selected in player setup */
     SDL_Scancode keyBindings[2][KEY_ACTION_COUNT];
 
     SDL_Texture *optionsBg;
@@ -435,6 +444,8 @@ typedef struct {
     SDL_Texture *quizBtnA;
     SDL_Texture *quizBtnB;
     SDL_Texture *quizBtnC;
+    SDL_Texture *puzzlePictureTex[2];
+    SDL_Texture *puzzlePieceTex[2][3];
     TTF_Font *quizFont;
     Mix_Music *quizMusic;
     Mix_Chunk *quizBeep;
@@ -444,6 +455,9 @@ typedef struct {
     Personnage gameCharacter;
     Personnage gameCharacter2;
     SDL_Texture *gameEnemyTex;
+    SDL_Texture *gameEnemyStandTex;
+    SDL_Texture *gameEnemyWalkTex;
+    SDL_Texture *gameEnemyRunTex;
     SDL_Texture *gameSpiderTex;
     SDL_Texture *gameFallingTex;
     Mix_Chunk *gameObstacleHitSound;

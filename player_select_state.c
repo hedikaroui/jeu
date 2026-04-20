@@ -27,6 +27,7 @@ static char ps_name1[256];
 static char ps_name2[256];
 static int ps_cursor1 = 0, ps_cursor2 = 0;
 static Uint32 ps_control_warn_until = 0;
+static int ps_mouse_conflict_warn = 0;
 static SDL_Texture *ps_dance_tex = NULL;
 static SDL_Texture *ps_settings_p1_tex = NULL;
 static SDL_Texture *ps_settings_p2_tex = NULL;
@@ -381,6 +382,17 @@ static void ps_commit_selection(Game *game, int player_count) {
     } else {
         game->player2_name[0] = '\0';
     }
+
+    game->playerControls[0] = (ps_selected_controls[0] >= 0)
+        ? ps_selected_controls[0]
+        : GAME_CONTROL_KEYBOARD;
+    game->playerControls[1] = (player_count == 2 && ps_selected_controls[1] >= 0)
+        ? ps_selected_controls[1]
+        : GAME_CONTROL_KEYBOARD;
+    if (game->playerControls[0] == GAME_CONTROL_MOUSE &&
+        game->playerControls[1] == GAME_CONTROL_MOUSE) {
+        game->playerControls[1] = GAME_CONTROL_KEYBOARD;
+    }
 }
 
 static void ps_enter_player_config(Game *game, int player_mode) {
@@ -391,6 +403,7 @@ static void ps_enter_player_config(Game *game, int player_mode) {
     ps_movement_settings_active_action = -1;
     ps_focus_field = 0;
     ps_control_warn_until = 0;
+    ps_mouse_conflict_warn = 0;
     ps_mono_arrow_rect = (SDL_Rect){-1000, -1000, 0, 0};
     SDL_StopTextInput();
 
@@ -541,6 +554,7 @@ int PlayerSelect_Charger(Game *game, SDL_Renderer *renderer) {
     ps_last_hover_mode_mono = 0;
     ps_last_hover_mode_multi = 0;
     ps_control_warn_until = 0;
+    ps_mouse_conflict_warn = 0;
     ps_hover_player1_photo = 0;
     ps_show_movement_settings = 0;
     ps_movement_settings_target_player = 0;
@@ -763,6 +777,7 @@ void PlayerSelect_LectureEntree(Game *game) {
             if (sym == SDLK_RETURN) {
                 if (ps_selected_controls[0] < 0 || (player_count == 2 && ps_selected_controls[1] < 0)) {
                     ps_control_warn_until = SDL_GetTicks() + 2000;
+                    ps_mouse_conflict_warn = 0;
                     if (game->click) Mix_PlayChannel(-1, game->click, 0);
                     continue;
                 }
@@ -847,6 +862,16 @@ void PlayerSelect_LectureEntree(Game *game) {
             for (int p = 0; p < player_count && !picked_control; p++) {
                 for (int c = 0; c < 3; c++) {
                     if (ps_point_in_rect(ps_controls[p][c], mx, my)) {
+                        if (c == GAME_CONTROL_MOUSE) {
+                            for (int other = 0; other < player_count; other++) {
+                                if (other != p &&
+                                    ps_selected_controls[other] == GAME_CONTROL_MOUSE) {
+                                    ps_selected_controls[other] = -1;
+                                    ps_control_warn_until = SDL_GetTicks() + 2000;
+                                    ps_mouse_conflict_warn = 1;
+                                }
+                            }
+                        }
                         ps_selected_controls[p] = c;
                         picked_control = 1;
                         break;
@@ -1015,6 +1040,9 @@ void PlayerSelect_Affichage(Game *game, SDL_Renderer *renderer) {
         const char *message = (player_count == 1)
             ? "Choose keyboard, controller or mouse for your player first"
             : "Choose keyboard, controller or mouse for each player first";
+        if (ps_mouse_conflict_warn) {
+            message = "Only one player can use the mouse";
+        }
         ps_draw_center_text(renderer, font, message, white, hint);
     }
 
