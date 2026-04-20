@@ -33,6 +33,20 @@ static SDL_Texture *ps_settings_p2_tex = NULL;
 static SDL_Texture *ps_not_ready_tex = NULL;
 static SDL_Texture *ps_ready_tex = NULL;
 static SDL_Texture *ps_arrow_right_tex = NULL;
+static SDL_Texture *ps_movement_settings_tex = NULL;
+static SDL_Texture *ps_send_button_tex = NULL;
+static SDL_Texture *ps_cancel_button_tex = NULL;
+static int ps_show_movement_settings = 0;
+static int ps_movement_settings_target_player = 0;
+static int ps_movement_settings_active_action = -1;
+static SDL_Scancode ps_movement_settings_keys[KEY_ACTION_COUNT];
+static SDL_Rect ps_movement_settings_key_rects[KEY_ACTION_COUNT];
+static SDL_Rect ps_movement_settings_send_rect;
+static SDL_Rect ps_movement_settings_cancel_rect;
+static SDL_Rect ps_movement_settings_close_rect;
+static int ps_movement_settings_hover_send = 0;
+static int ps_movement_settings_hover_cancel = 0;
+static int ps_movement_settings_hover_close = 0;
 static int ps_dance_rows = 5, ps_dance_cols = 5;
 static int ps_dance_frame_w = 0, ps_dance_frame_h = 0;
 static int ps_dance_frame = 0;
@@ -46,6 +60,25 @@ static int ps_mono_character_index = 0; /* 0 -> first player, 1 -> second player
 
 static int ps_point_in_rect(SDL_Rect r, int x, int y) {
     return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+static SDL_Rect ps_control_help_icon_rect(int player, int control, int active) {
+    SDL_Rect r = ps_controls[player][control];
+    if (active) r.y -= 4;
+    return (SDL_Rect){r.x + r.w - 24, r.y + 4, 20, 20};
+}
+
+static int ps_keyboard_help_icon_hit(int player_count, int x, int y, int *player_out) {
+    for (int p = 0; p < player_count; p++) {
+        SDL_Rect normal = ps_control_help_icon_rect(p, 0, 0);
+        SDL_Rect shifted = ps_control_help_icon_rect(p, 0, 1);
+        if (ps_point_in_rect(normal, x, y) || ps_point_in_rect(shifted, x, y)) {
+            if (player_out) *player_out = p;
+            return 1;
+        }
+    }
+    if (player_out) *player_out = -1;
+    return 0;
 }
 
 static SDL_Texture *load_texture_first(SDL_Renderer *renderer, const char *a, const char *b, const char *c) {
@@ -75,6 +108,118 @@ static void ps_draw_texture_in_rect(SDL_Renderer *renderer, SDL_Texture *tex, SD
     draw.x = dst_rect.x + (dst_rect.w - draw.w) / 2;
     draw.y = dst_rect.y + (dst_rect.h - draw.h) / 2;
     SDL_RenderCopy(renderer, tex, NULL, &draw);
+}
+
+static SDL_Rect ps_fit_texture_rect(SDL_Texture *tex, SDL_Rect dst_rect) {
+    SDL_Rect draw = dst_rect;
+    int tw = 0;
+    int th = 0;
+    if (!tex || dst_rect.w <= 0 || dst_rect.h <= 0) return draw;
+    if (SDL_QueryTexture(tex, NULL, NULL, &tw, &th) != 0 || tw <= 0 || th <= 0) return draw;
+
+    {
+        double scale_x = (double)dst_rect.w / (double)tw;
+        double scale_y = (double)dst_rect.h / (double)th;
+        double scale = (scale_x < scale_y) ? scale_x : scale_y;
+        if (scale <= 0.0) scale = 1.0;
+        draw.w = (int)(tw * scale);
+        draw.h = (int)(th * scale);
+        draw.x = dst_rect.x + (dst_rect.w - draw.w) / 2;
+        draw.y = dst_rect.y + (dst_rect.h - draw.h) / 2;
+    }
+    return draw;
+}
+
+static SDL_Scancode ps_default_binding_for(int player_index, int action) {
+    if (player_index == 0) {
+        switch (action) {
+            case KEY_ACTION_WALK: return SDL_SCANCODE_D;
+            case KEY_ACTION_JUMP: return SDL_SCANCODE_W;
+            case KEY_ACTION_RUN: return SDL_SCANCODE_LSHIFT;
+            case KEY_ACTION_DOWN: return SDL_SCANCODE_A;
+            case KEY_ACTION_DANCE: return SDL_SCANCODE_SPACE;
+            default: return SDL_SCANCODE_UNKNOWN;
+        }
+    }
+    switch (action) {
+        case KEY_ACTION_WALK: return SDL_SCANCODE_RIGHT;
+        case KEY_ACTION_JUMP: return SDL_SCANCODE_UP;
+        case KEY_ACTION_RUN: return SDL_SCANCODE_RSHIFT;
+        case KEY_ACTION_DOWN: return SDL_SCANCODE_LEFT;
+        case KEY_ACTION_DANCE: return SDL_SCANCODE_RETURN;
+        default: return SDL_SCANCODE_UNKNOWN;
+    }
+}
+
+static void ps_reset_movement_settings_labels(void) {
+    for (int i = 0; i < KEY_ACTION_COUNT; i++) {
+        ps_movement_settings_keys[i] = ps_default_binding_for(ps_movement_settings_target_player, i);
+    }
+    ps_movement_settings_active_action = -1;
+}
+
+static void ps_open_movement_settings(Game *game, int player_index) {
+    if (!game) return;
+    if (player_index < 0) player_index = 0;
+    if (player_index > 1) player_index = 1;
+    ps_movement_settings_target_player = player_index;
+    for (int i = 0; i < KEY_ACTION_COUNT; i++) {
+        SDL_Scancode code = game->keyBindings[player_index][i];
+        if (code == SDL_SCANCODE_UNKNOWN) code = ps_default_binding_for(player_index, i);
+        ps_movement_settings_keys[i] = code;
+    }
+    ps_movement_settings_active_action = -1;
+    ps_show_movement_settings = 1;
+}
+
+static void ps_apply_movement_settings(Game *game) {
+    if (!game) return;
+    for (int i = 0; i < KEY_ACTION_COUNT; i++) {
+        game->keyBindings[ps_movement_settings_target_player][i] = ps_movement_settings_keys[i];
+    }
+}
+
+static const char *ps_key_label(SDL_Scancode sc) {
+    const char *name;
+    if (sc == SDL_SCANCODE_UNKNOWN) return "...";
+    name = SDL_GetScancodeName(sc);
+    if (!name || !*name) return "...";
+    return name;
+}
+
+static void ps_layout_movement_settings_widgets(SDL_Rect panel_draw_rect) {
+    int key_x = panel_draw_rect.x + (int)(panel_draw_rect.w * 0.60);
+    int key_w = (int)(panel_draw_rect.w * 0.24);
+    int row_h = (int)(panel_draw_rect.h * 0.055);
+    int first_center_y = panel_draw_rect.y + (int)(panel_draw_rect.h * 0.432);
+    int step_y = (int)(panel_draw_rect.h * 0.080);
+    int btn_w = (int)(panel_draw_rect.w * 0.18);
+    int btn_h;
+    int btn_y;
+
+    if (key_w < 160) key_w = 160;
+    if (row_h < 34) row_h = 34;
+    if (step_y < 42) step_y = 42;
+
+    for (int i = 0; i < KEY_ACTION_COUNT; i++) {
+        int cy = first_center_y + i * step_y;
+        ps_movement_settings_key_rects[i] = (SDL_Rect){key_x, cy - row_h / 2, key_w, row_h};
+    }
+
+    if (btn_w < 160) btn_w = 160;
+    btn_h = (btn_w * 50) / 200;
+    if (btn_h < 40) btn_h = 40;
+    btn_y = panel_draw_rect.y + panel_draw_rect.h - btn_h - (int)(panel_draw_rect.h * 0.065);
+    ps_movement_settings_cancel_rect = (SDL_Rect){
+        panel_draw_rect.x + (int)(panel_draw_rect.w * 0.13), btn_y, btn_w, btn_h
+    };
+    ps_movement_settings_send_rect = (SDL_Rect){
+        panel_draw_rect.x + panel_draw_rect.w - (int)(panel_draw_rect.w * 0.13) - btn_w,
+        btn_y, btn_w, btn_h
+    };
+    ps_movement_settings_close_rect = (SDL_Rect){
+        panel_draw_rect.x + panel_draw_rect.w - 44, panel_draw_rect.y + 18, 26, 26
+    };
 }
 
 static void ps_draw_text(SDL_Renderer *renderer, TTF_Font *font, const char *text,
@@ -242,6 +387,8 @@ static void ps_enter_player_config(Game *game, int player_mode) {
     game->player_mode = player_mode;
     ps_layout_player_config(game);
     ps_clear_config_hover();
+    ps_show_movement_settings = 0;
+    ps_movement_settings_active_action = -1;
     ps_focus_field = 0;
     ps_control_warn_until = 0;
     ps_mono_arrow_rect = (SDL_Rect){-1000, -1000, 0, 0};
@@ -350,6 +497,12 @@ int PlayerSelect_Charger(Game *game, SDL_Renderer *renderer) {
         ps_ready_tex = load_texture_first(renderer, "buttons/ready.png", "buttons/ready_button.png", NULL);
     if (!ps_arrow_right_tex)
         ps_arrow_right_tex = load_texture_first(renderer, "buttons/arrow right.jpg", "buttons/arrow_right.jpg", NULL);
+    if (!ps_movement_settings_tex)
+        ps_movement_settings_tex = IMG_LoadTexture(renderer, "buttons/movement_settings.png");
+    if (!ps_send_button_tex)
+        ps_send_button_tex = IMG_LoadTexture(renderer, "buttons/send_button.png");
+    if (!ps_cancel_button_tex)
+        ps_cancel_button_tex = IMG_LoadTexture(renderer, "buttons/cancel_button.png");
 
     ps_help_top_right_rect = (SDL_Rect){WIDTH - 70, 18, 48, 48};
     ps_layout_player_config(game);
@@ -389,6 +542,9 @@ int PlayerSelect_Charger(Game *game, SDL_Renderer *renderer) {
     ps_last_hover_mode_multi = 0;
     ps_control_warn_until = 0;
     ps_hover_player1_photo = 0;
+    ps_show_movement_settings = 0;
+    ps_movement_settings_target_player = 0;
+    ps_movement_settings_active_action = -1;
     ps_dance_frame = 0;
     ps_dance_last_tick = SDL_GetTicks();
     ps_cursor_timer = SDL_GetTicks();
@@ -465,6 +621,74 @@ void PlayerSelect_LectureEntree(Game *game) {
         if (e.type == SDL_QUIT) {
             game->running = 0;
             return;
+        }
+
+        if (ps_show_movement_settings) {
+            SDL_Rect panel_slot = {(WIDTH - 1000) / 2, (HEIGHT - 666) / 2, 1000, 666};
+            SDL_Rect panel_draw = ps_fit_texture_rect(ps_movement_settings_tex, panel_slot);
+            ps_layout_movement_settings_widgets(panel_draw);
+
+            if (e.type == SDL_MOUSEMOTION) {
+                int mx = e.motion.x;
+                int my = e.motion.y;
+                ps_movement_settings_hover_send = ps_point_in_rect(ps_movement_settings_send_rect, mx, my);
+                ps_movement_settings_hover_cancel = ps_point_in_rect(ps_movement_settings_cancel_rect, mx, my);
+                ps_movement_settings_hover_close = ps_point_in_rect(ps_movement_settings_close_rect, mx, my);
+            }
+
+            if (e.type == SDL_KEYDOWN) {
+                SDL_Keycode sym = e.key.keysym.sym;
+                if (sym == SDLK_ESCAPE) {
+                    ps_show_movement_settings = 0;
+                    ps_movement_settings_active_action = -1;
+                    continue;
+                }
+                if (sym == SDLK_TAB) {
+                    ps_movement_settings_active_action =
+                        (ps_movement_settings_active_action + 1 + KEY_ACTION_COUNT) % KEY_ACTION_COUNT;
+                    continue;
+                }
+                if (ps_movement_settings_active_action >= 0 &&
+                    ps_movement_settings_active_action < KEY_ACTION_COUNT) {
+                    if (sym == SDLK_BACKSPACE || sym == SDLK_DELETE) {
+                        ps_movement_settings_keys[ps_movement_settings_active_action] = SDL_SCANCODE_UNKNOWN;
+                    } else {
+                        ps_movement_settings_keys[ps_movement_settings_active_action] = e.key.keysym.scancode;
+                    }
+                }
+                continue;
+            }
+
+            if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                int mx = e.button.x;
+                int my = e.button.y;
+                if (ps_point_in_rect(ps_movement_settings_close_rect, mx, my)) {
+                    ps_show_movement_settings = 0;
+                    ps_movement_settings_active_action = -1;
+                    if (game->click) Mix_PlayChannel(-1, game->click, 0);
+                    continue;
+                }
+                if (ps_point_in_rect(ps_movement_settings_cancel_rect, mx, my)) {
+                    ps_reset_movement_settings_labels();
+                    if (game->click) Mix_PlayChannel(-1, game->click, 0);
+                    continue;
+                }
+                if (ps_point_in_rect(ps_movement_settings_send_rect, mx, my)) {
+                    ps_apply_movement_settings(game);
+                    ps_show_movement_settings = 0;
+                    ps_movement_settings_active_action = -1;
+                    if (game->click) Mix_PlayChannel(-1, game->click, 0);
+                    continue;
+                }
+                for (int i = 0; i < KEY_ACTION_COUNT; i++) {
+                    if (ps_point_in_rect(ps_movement_settings_key_rects[i], mx, my)) {
+                        ps_movement_settings_active_action = i;
+                        if (game->click) Mix_PlayChannel(-1, game->click, 0);
+                        break;
+                    }
+                }
+            }
+            continue;
         }
 
         if (e.type == SDL_MOUSEMOTION) {
@@ -587,6 +811,21 @@ void PlayerSelect_LectureEntree(Game *game) {
         if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
             int mx = e.button.x;
             int my = e.button.y;
+
+            {
+                int help_player = -1;
+                if (ps_keyboard_help_icon_hit(player_count, mx, my, &help_player)) {
+                    ps_open_movement_settings(game, help_player);
+                    ps_movement_settings_hover_send = 0;
+                    ps_movement_settings_hover_cancel = 0;
+                    ps_movement_settings_hover_close = 0;
+                    ps_focus_field = 0;
+                    SDL_StopTextInput();
+                    if (game->click) Mix_PlayChannel(-1, game->click, 0);
+                    continue;
+                }
+            }
+
             if (ps_point_in_rect(ps_input1, mx, my)) {
                 ps_focus_field = 1;
                 SDL_StartTextInput();
@@ -765,7 +1004,7 @@ void PlayerSelect_Affichage(Game *game, SDL_Renderer *renderer) {
             if (active) r.y -= 4;
             if (tex) SDL_RenderCopy(renderer, tex, NULL, &r);
             if (game->psHelpIconTex && (c == 0 || c == 1)) {
-                SDL_Rect help_on_control = {r.x + r.w - 24, r.y + 4, 20, 20};
+                SDL_Rect help_on_control = ps_control_help_icon_rect(p, c, active);
                 SDL_RenderCopy(renderer, game->psHelpIconTex, NULL, &help_on_control);
             }
         }
@@ -826,6 +1065,67 @@ void PlayerSelect_Affichage(Game *game, SDL_Renderer *renderer) {
         } else {
             ps_draw_center_text(renderer, font, "SCORES", white, ps_score_btn);
         }
+    }
+
+    if (ps_show_movement_settings) {
+        SDL_Rect overlay = {0, 0, WIDTH, HEIGHT};
+        SDL_Rect panel_slot = {(WIDTH - 1000) / 2, (HEIGHT - 666) / 2, 1000, 666};
+        SDL_Rect panel_draw = ps_fit_texture_rect(ps_movement_settings_tex, panel_slot);
+        SDL_Color key_text = {20, 32, 30, 255};
+        SDL_Color key_active = {200, 0, 0, 255};
+
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 185);
+        SDL_RenderFillRect(renderer, &overlay);
+        ps_layout_movement_settings_widgets(panel_draw);
+
+        if (ps_movement_settings_tex) {
+            ps_draw_texture_in_rect(renderer, ps_movement_settings_tex, panel_slot);
+        } else {
+            SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+            SDL_RenderDrawRect(renderer, &panel_draw);
+            ps_draw_center_text(renderer, font, "movement_settings.png not found", white, panel_draw);
+        }
+
+        for (int i = 0; i < KEY_ACTION_COUNT; i++) {
+            SDL_Rect r = ps_movement_settings_key_rects[i];
+            int active = (i == ps_movement_settings_active_action);
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer, 255, 255, 255, active ? 230 : 180);
+            SDL_RenderFillRect(renderer, &r);
+            SDL_SetRenderDrawColor(renderer, active ? 215 : 165, active ? 38 : 165, active ? 38 : 165, 255);
+            SDL_RenderDrawRect(renderer, &r);
+            ps_draw_center_text(renderer, font, ps_key_label(ps_movement_settings_keys[i]),
+                                active ? key_active : key_text, r);
+        }
+
+        {
+            SDL_Rect send_rect = ps_movement_settings_send_rect;
+            SDL_Rect cancel_rect = ps_movement_settings_cancel_rect;
+            if (ps_movement_settings_hover_send) send_rect.y -= 2;
+            if (ps_movement_settings_hover_cancel) cancel_rect.y -= 2;
+
+            if (ps_send_button_tex) ps_draw_texture_in_rect(renderer, ps_send_button_tex, send_rect);
+            else ps_draw_center_text(renderer, font, "Send", white, send_rect);
+
+            if (ps_cancel_button_tex) ps_draw_texture_in_rect(renderer, ps_cancel_button_tex, cancel_rect);
+            else ps_draw_center_text(renderer, font, "Cancel", white, cancel_rect);
+        }
+
+        {
+            SDL_Rect close = ps_movement_settings_close_rect;
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer,
+                                   ps_movement_settings_hover_close ? 210 : 165,
+                                   38, 38, 245);
+            SDL_RenderFillRect(renderer, &close);
+            SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+            SDL_RenderDrawRect(renderer, &close);
+            ps_draw_center_text(renderer, font, "X", white, close);
+        }
+
+        ps_draw_center_text(renderer, font, "Click a key label, press a key, then send",
+                            white, (SDL_Rect){panel_draw.x + 130, panel_draw.y + panel_draw.h - 56, panel_draw.w - 260, 28});
     }
 }
 

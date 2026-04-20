@@ -57,6 +57,8 @@ typedef struct {
     SDL_Texture *runBackTexture;
     SDL_Texture *jumpTexture;
     SDL_Texture *jumpBackTexture;
+    SDL_Texture *damageTexture;
+    SDL_Texture *layDownTexture;
     SDL_Rect position;
     int up;
     int jumpPhase;
@@ -77,6 +79,9 @@ typedef struct {
     int pendingJump;
     int frameIndex;
     Uint32 lastFrameTick;
+    int damageActive;
+    Uint32 damageStartTick;
+    Uint32 damageInvulnUntil;
 } Personnage;
 
 typedef struct {
@@ -146,18 +151,63 @@ typedef struct {
 } OptionsUiState;
 
 typedef enum {
+    KEY_ACTION_WALK = 0,
+    KEY_ACTION_JUMP,
+    KEY_ACTION_RUN,
+    KEY_ACTION_DOWN,
+    KEY_ACTION_DANCE,
+    KEY_ACTION_COUNT
+} KeyAction;
+
+typedef enum {
     GAME_MOVE_STOP = 0,
     GAME_MOVE_WALK,
     GAME_MOVE_RUN,
     GAME_MOVE_RUN_BACK,
     GAME_MOVE_WALK_BACK,
     GAME_MOVE_JUMP,
-    GAME_MOVE_JUMP_BACK
+    GAME_MOVE_JUMP_BACK,
+    GAME_MOVE_DAMAGE,
+    GAME_MOVE_LAY_DOWN
 } GameMovement;
+
+#define GAME_OBSTACLE_COUNT 2
+
+typedef struct {
+    SDL_Texture *texture;
+    SDL_Rect position;
+    int active;
+    int collidingPlayer1;
+    int collidingPlayer2;
+    int direction;
+    int minX;
+    int maxX;
+    int speed;
+    int baseY;
+    double amplitude;
+    double frequency;
+    double phase;
+} GameObstacle;
+
+typedef struct {
+    SDL_Texture *texture;
+    SDL_Rect position;
+    SDL_Rect sprite;
+    int active;
+    int frameWidth;
+    int frameHeight;
+    int frame;
+    int nbCols;
+    int nbRows;
+    int direction;
+    Uint32 lastFrameTick;
+} GameEnemy;
 
 typedef struct {
     SDL_Texture *walk_tex;
     SDL_Texture *walk_back_tex;
+    SDL_Texture *run_tex;
+    SDL_Texture *run_back_tex;
     SDL_Texture *jump_tex;
     SDL_Texture *jump_back_tex;
     SDL_Texture *stop_tex;
@@ -173,6 +223,14 @@ typedef struct {
     int walk_back_cols;
     int walk_back_frame_w;
     int walk_back_frame_h;
+    int run_rows;
+    int run_cols;
+    int run_frame_w;
+    int run_frame_h;
+    int run_back_rows;
+    int run_back_cols;
+    int run_back_frame_w;
+    int run_back_frame_h;
     int jump_rows;
     int jump_cols;
     int jump_frame_w;
@@ -200,6 +258,7 @@ typedef struct {
     int frame_index;
     int facing;
     int moving;
+    int running;
     int idle_state;
     int idle_msg_index;
     Uint32 move_hold_ms;
@@ -324,6 +383,9 @@ typedef struct {
     SDL_Texture *player1Tex;
     SDL_Texture *player2Tex;
     SDL_Texture *gameBgTex;
+    SDL_Texture *miniMapFrameTex;
+    SDL_Texture *miniMapLockClosedTex;
+    SDL_Texture *miniMapLockOpenTex;
     SDL_Texture *psJ1Tex;
     SDL_Texture *psJ2Tex;
     SDL_Texture *psKeyboardTex;
@@ -345,6 +407,9 @@ typedef struct {
     int player_mode;
     int solo_selected_player; /* 0: first player, 1: second player */
     int duo_display_mode;     /* 0: same screen, 1: vertical split, 2: horizontal split */
+    int duo_background_mode;  /* 0: fixed background, 1: scrolling background */
+    float minimap_zoom;       /* mini-map zoom factor (0.5 -> 2.0) */
+    SDL_Scancode keyBindings[2][KEY_ACTION_COUNT];
 
     SDL_Texture *optionsBg;
     SDL_Texture *optionsTitle;
@@ -378,6 +443,12 @@ typedef struct {
 
     Personnage gameCharacter;
     Personnage gameCharacter2;
+    SDL_Texture *gameEnemyTex;
+    SDL_Texture *gameSpiderTex;
+    SDL_Texture *gameFallingTex;
+    Mix_Chunk *gameObstacleHitSound;
+    GameEnemy gameEnemy;
+    GameObstacle gameObstacles[GAME_OBSTACLE_COUNT];
     int gameLoaded;
     Uint32 gameLastTick;
 
@@ -401,7 +472,7 @@ GameState Game_MainStateFromSubState(GameSubState subState);
 void Game_SetSubState(Game *game, GameSubState subState);
 
 void GameLoop_ModuleInitialisationEtat(Game *game, SDL_Renderer *renderer);
-void GameLoop_ModuleInput(Game *game);
+void GameLoop_ModuleInput(Game *game, SDL_Renderer *renderer);
 void GameLoop_ModuleUpdate(Game *game);
 void GameLoop_ModuleAffichage(Game *game, SDL_Renderer *renderer);
 

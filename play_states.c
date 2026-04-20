@@ -37,6 +37,9 @@ static Uint32 startPlayLastJumpDebugTick = 0;
 #define STARTPLAY_MAX_SPEED_BONUS 45.0
 #define STARTPLAY_BASE_Y_SPEED 4
 #define STARTPLAY_Y_SPEED_BONUS 5.0
+#define STARTPLAY_PLAYER_Y 544.0
+#define STARTPLAY_RUN_MAX_SPEED 1000.0
+#define STARTPLAY_RUN_ACCEL 6000.0
 #define STARTPLAY_WALK_FRAME_BASE_MS 140
 #define STARTPLAY_WALK_FRAME_BONUS_DIV 28
 #define STARTPLAY_WALK_FRAME_BONUS_CAP 95
@@ -51,6 +54,28 @@ static const char *startplay_wave_msgs[] = {
 static int ps_point_in_rect(SDL_Rect r, int x, int y) {
     return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
+
+static int game_key_pressed(const Uint8 *keys, SDL_Scancode sc) {
+    if (!keys || sc == SDL_SCANCODE_UNKNOWN) return 0;
+    return keys[sc] != 0;
+}
+
+static void game_minimap_ensure_layout(void);
+static int game_handle_minimap_mouse_event(const SDL_Event *e);
+static void game_render_background(Game *game, SDL_Renderer *renderer, SDL_Rect dst,
+                                   int focus_x, int focus_y);
+static void game_render_minimap_overlay(Game *game, SDL_Renderer *renderer, int include_second_player,
+                                        SDL_Texture *primary_marker_tex, const SDL_Rect *primary_pos_override);
+static void game_reset_enemy_obstacles(Game *game);
+static void game_sync_start_play_character(Game *game);
+static void game_update_world_hazards_motion(Game *game, Uint32 dt, Uint32 now);
+static void game_update_world_hazards(Game *game, Uint32 dt, Uint32 now);
+static void game_render_world_hazards(Game *game, SDL_Renderer *renderer);
+static void game_destroy_character_textures(Personnage *p);
+static void game_load_harry_character(SDL_Renderer *renderer, Personnage *p);
+static void game_load_marvin_character(SDL_Renderer *renderer, Personnage *p);
+static int game_update_damage_state(Personnage *p, Uint32 now);
+static void game_draw_character(SDL_Renderer *renderer, Personnage *p);
 
 static void start_play_reload_texture(SDL_Renderer *renderer, SDL_Texture **dst, const char *path) {
     if (!dst) return;
@@ -107,7 +132,7 @@ static void start_play_setup_sheet(SDL_Texture *tex, int wanted_rows, int wanted
 static void start_play_reset_mover(void) {
     Uint32 now = SDL_GetTicks();
     startPlayMover.x = (WIDTH - 120) / 2.0;
-    startPlayMover.y = (HEIGHT - 120) / 2.0 + 40.0;
+    startPlayMover.y = STARTPLAY_PLAYER_Y;
     startPlayMover.vitesse = 0.0;
     startPlayMover.acceleration = 0.0;
     startPlayMover.position_acc = (SDL_Rect){(int)startPlayMover.x, (int)startPlayMover.y, 120, 120};
@@ -115,6 +140,7 @@ static void start_play_reset_mover(void) {
     startPlayAnim.frame_index = 0;
     startPlayAnim.facing = 1;
     startPlayAnim.moving = 0;
+    startPlayAnim.running = 0;
     startPlayAnim.idle_state = STARTPLAY_IDLE_NONE;
     startPlayAnim.idle_msg_index = 0;
     startPlayAnim.move_hold_ms = 0;
@@ -132,6 +158,22 @@ static void start_play_reset_mover(void) {
     startPlayLastJumpDebugTick = 0;
 }
 
+static void start_play_trigger_dance(Uint32 now) {
+    if (startPlayJumping) return;
+    startPlayMover.acceleration = 0.0;
+    startPlayMover.vitesse = 0.0;
+    startPlayAnim.moving = 0;
+    startPlayAnim.running = 0;
+    startPlayAnim.idle_state = STARTPLAY_IDLE_DANCE;
+    startPlayAnim.frame_index = 0;
+    startPlayAnim.last_input_tick = now;
+    startPlayAnim.idle_msg_tick = now;
+    startPlayAnim.last_anim_tick = now;
+    if (startPlayAnim.dance_loop_sfx && startPlayAnim.dance_loop_channel < 0) {
+        startPlayAnim.dance_loop_channel = Mix_PlayChannel(-1, startPlayAnim.dance_loop_sfx, -1);
+    }
+}
+
 static void start_play_begin_jump(int dir, Uint32 now) {
     if (startPlayJumping) return;
     startPlayJumping = 1;
@@ -145,6 +187,7 @@ static void start_play_begin_jump(int dir, Uint32 now) {
     if (dir != 0) startPlayAnim.facing = dir;
     startPlayAnim.idle_state = STARTPLAY_IDLE_NONE;
     startPlayAnim.moving = 0;
+    startPlayAnim.running = 0;
     startPlayAnim.frame_index = 0;
     startPlayAnim.last_anim_tick = now;
     printf("[START_PLAY JUMP] start base=(%d,%d) dir=%d facing=%d\n",
@@ -203,6 +246,37 @@ static void start_play_move_mover(Uint32 dt_ms) {
     startPlayMover.position_acc.x = (int)lround(startPlayMover.x);
     startPlayMover.position_acc.y = (int)lround(startPlayMover.y);
     startPlayPlayerRect = startPlayMover.position_acc;
+}
+
+static void game_sync_start_play_character(Game *game) {
+    Personnage *p;
+
+    if (!game) return;
+
+    p = &game->gameCharacter;
+    p->position = startPlayPlayerRect;
+    p->groundY = (int)lround(STARTPLAY_PLAYER_Y);
+    p->facing = startPlayAnim.facing;
+
+    if (p->damageActive) {
+        p->up = 0;
+        p->moving = 0;
+        p->position.y = p->groundY;
+        return;
+    }
+
+    p->up = startPlayJumping;
+    p->moving = startPlayAnim.moving;
+
+    if (startPlayJumping) {
+        p->movementState = (startPlayAnim.facing < 0) ? GAME_MOVE_JUMP_BACK : GAME_MOVE_JUMP;
+    } else if (startPlayAnim.moving && startPlayAnim.running) {
+        p->movementState = (startPlayAnim.facing < 0) ? GAME_MOVE_RUN_BACK : GAME_MOVE_RUN;
+    } else if (startPlayAnim.moving) {
+        p->movementState = (startPlayAnim.facing < 0) ? GAME_MOVE_WALK_BACK : GAME_MOVE_WALK;
+    } else {
+        p->movementState = GAME_MOVE_STOP;
+    }
 }
 
 void box_message(SDL_Renderer *renderer, TTF_Font *font, const char *message, SDL_Rect box) {
@@ -283,6 +357,20 @@ int StartPlay_Charger(Game *game, SDL_Renderer *renderer) {
 
     if (!game->player1Tex)
         game->player1Tex = IMG_LoadTexture(renderer, GAME_ASSETS.characters.player1);
+    if (!game->miniMapFrameTex)
+        game->miniMapFrameTex = IMG_LoadTexture(renderer, "backgrounds/cadre_mini_map.png");
+    if (!game->miniMapLockClosedTex)
+        game->miniMapLockClosedTex = IMG_LoadTexture(renderer, "buttons/ferme_lock_1.png");
+    if (!game->miniMapLockOpenTex)
+        game->miniMapLockOpenTex = IMG_LoadTexture(renderer, "buttons/ouvert_lock_2.png");
+    if (!game->gameEnemyTex)
+        game->gameEnemyTex = IMG_LoadTexture(renderer, "enemyobtacle/enemy.png");
+    if (!game->gameSpiderTex)
+        game->gameSpiderTex = IMG_LoadTexture(renderer, "enemyobtacle/spider.png");
+    if (!game->gameFallingTex)
+        game->gameFallingTex = IMG_LoadTexture(renderer, "enemyobtacle/falling.png");
+    if (!game->gameObstacleHitSound)
+        game->gameObstacleHitSound = Mix_LoadWAV("enemyobtacle/sound.wav");
 
     use_marvin = (game->player_mode == 1 && game->solo_selected_player == 1);
     if (use_marvin) {
@@ -291,6 +379,10 @@ int StartPlay_Charger(Game *game, SDL_Renderer *renderer) {
         start_play_reload_texture_first(renderer, &startPlayAnim.walk_back_tex,
                                         "spritesheet_characters/marvin-walk-v1-reverse.png",
                                         "spritesheet_characters/marvin-walk-v1 -reverse.png");
+        start_play_reload_texture(renderer, &startPlayAnim.run_tex,
+                                  "spritesheet_characters/marvin-run.png");
+        start_play_reload_texture(renderer, &startPlayAnim.run_back_tex,
+                                  "spritesheet_characters/marvin-run-reverse.png");
         start_play_reload_texture(renderer, &startPlayAnim.jump_tex,
                                   "spritesheet_characters/marvin-jump.png");
         start_play_reload_texture_first(renderer, &startPlayAnim.jump_back_tex,
@@ -305,6 +397,11 @@ int StartPlay_Charger(Game *game, SDL_Renderer *renderer) {
                                   "spritesheet_characters/mr_harry_walk_cycle_transparent.png");
         start_play_reload_texture(renderer, &startPlayAnim.walk_back_tex,
                                   "spritesheet_characters/mr_harry_walk_cycle_back_transparent.png");
+        start_play_reload_texture(renderer, &startPlayAnim.run_tex,
+                                  "spritesheet_characters/mr_harry_run.png");
+        start_play_reload_texture_first(renderer, &startPlayAnim.run_back_tex,
+                                        "spritesheet_characters/mr harry-run-reverse.png",
+                                        "spritesheet_characters/mr harry-run -reverse.png");
         start_play_reload_texture(renderer, &startPlayAnim.jump_tex,
                                   "spritesheet_characters/mr_harry_jump_transparent.png");
         start_play_reload_texture(renderer, &startPlayAnim.jump_back_tex,
@@ -324,6 +421,14 @@ int StartPlay_Charger(Game *game, SDL_Renderer *renderer) {
                               use_marvin
                                   ? "spritesheet_characters/marvin-stand-up.png"
                                   : "spritesheet_characters/mr_harry_wave_animation_transparent.png");
+    game_destroy_character_textures(&game->gameCharacter);
+    if (use_marvin) game_load_marvin_character(renderer, &game->gameCharacter);
+    else game_load_harry_character(renderer, &game->gameCharacter);
+    game->gameCharacter.damageActive = 0;
+    game->gameCharacter.damageStartTick = 0;
+    game->gameCharacter.damageInvulnUntil = 0;
+    game->gameCharacter.frameIndex = 0;
+    game->gameCharacter.lastFrameTick = SDL_GetTicks();
     if (!startPlayAnim.dance_loop_sfx) {
         startPlayAnim.dance_loop_sfx = Mix_LoadWAV("songs/sahara-dans-song.wav");
         if (!startPlayAnim.dance_loop_sfx)
@@ -342,6 +447,12 @@ int StartPlay_Charger(Game *game, SDL_Renderer *renderer) {
     start_play_setup_sheet(startPlayAnim.walk_back_tex, HARRY_SHEET_ROWS, HARRY_SHEET_COLS,
                            &startPlayAnim.walk_back_rows, &startPlayAnim.walk_back_cols,
                            &startPlayAnim.walk_back_frame_w, &startPlayAnim.walk_back_frame_h);
+    start_play_setup_sheet(startPlayAnim.run_tex, HARRY_SHEET_ROWS, HARRY_SHEET_COLS,
+                           &startPlayAnim.run_rows, &startPlayAnim.run_cols,
+                           &startPlayAnim.run_frame_w, &startPlayAnim.run_frame_h);
+    start_play_setup_sheet(startPlayAnim.run_back_tex, HARRY_SHEET_ROWS, HARRY_SHEET_COLS,
+                           &startPlayAnim.run_back_rows, &startPlayAnim.run_back_cols,
+                           &startPlayAnim.run_back_frame_w, &startPlayAnim.run_back_frame_h);
     start_play_setup_sheet(startPlayAnim.jump_tex, HARRY_SHEET_ROWS, HARRY_SHEET_COLS,
                            &startPlayAnim.jump_rows, &startPlayAnim.jump_cols,
                            &startPlayAnim.jump_frame_w, &startPlayAnim.jump_frame_h);
@@ -364,16 +475,20 @@ int StartPlay_Charger(Game *game, SDL_Renderer *renderer) {
     startPlayAnim.frame_index = 0;
     startPlayAnim.facing = 1;
     startPlayAnim.moving = 0;
+    startPlayAnim.running = 0;
     startPlayAnim.idle_state = STARTPLAY_IDLE_NONE;
     startPlayAnim.idle_msg_index = 0;
     startPlayAnim.move_hold_ms = 0;
     startPlayAnim.last_input_tick = SDL_GetTicks();
     startPlayAnim.idle_msg_tick = startPlayAnim.last_input_tick;
     startPlayAnim.last_anim_tick = SDL_GetTicks();
+    game_minimap_ensure_layout();
 
     startPlayIntroStart = SDL_GetTicks();
     startPlayLastTick = startPlayIntroStart;
     start_play_reset_mover();
+    game_sync_start_play_character(game);
+    game_reset_enemy_obstacles(game);
 
     game->startPlayLoaded = 1;
     return 1;
@@ -392,7 +507,13 @@ void StartPlay_LectureEntree(Game *game) {
             game->running = 0;
             return;
         }
+        if (game->player_mode == 1 &&
+            SDL_GetTicks() - startPlayIntroStart >= 2000 &&
+            game_handle_minimap_mouse_event(&e)) {
+            continue;
+        }
         if (e.type == SDL_KEYDOWN) {
+            SDL_Scancode scan = e.key.keysym.scancode;
             if (e.key.keysym.sym == SDLK_ESCAPE) {
                 if (startPlayAnim.dance_loop_channel >= 0) {
                     Mix_HaltChannel(startPlayAnim.dance_loop_channel);
@@ -406,12 +527,12 @@ void StartPlay_LectureEntree(Game *game) {
                 startPlayLastTick = 0;
                 return;
             }
-            if (e.key.keysym.scancode == SDL_SCANCODE_SPACE ||
-                e.key.keysym.scancode == SDL_SCANCODE_UP ||
-                e.key.keysym.scancode == SDL_SCANCODE_W) {
+            if (scan == game->keyBindings[0][KEY_ACTION_JUMP]) {
                 startPlayPendingJump = 1;
                 printf("[START_PLAY INPUT] jump key pressed: %s\n", SDL_GetKeyName(e.key.keysym.sym));
                 fflush(stdout);
+            } else if (scan == game->keyBindings[0][KEY_ACTION_DANCE]) {
+                start_play_trigger_dance(SDL_GetTicks());
             }
         }
     }
@@ -422,13 +543,32 @@ void StartPlay_LectureEntree(Game *game) {
     Uint32 dt = (startPlayLastTick == 0) ? 16u : (now - startPlayLastTick);
     startPlayLastTick = now;
 
+    if (game && game->gameCharacter.damageActive) {
+        int still_damaged = game_update_damage_state(&game->gameCharacter, now);
+        startPlayPlayerRect = game->gameCharacter.position;
+        startPlayMover.x = (double)startPlayPlayerRect.x;
+        startPlayMover.y = (double)startPlayPlayerRect.y;
+        startPlayMover.vitesse = 0.0;
+        startPlayMover.acceleration = 0.0;
+        startPlayMover.position_acc = startPlayPlayerRect;
+        startPlayJumping = 0;
+        startPlayPendingJump = 0;
+        startPlayAnim.moving = 0;
+        startPlayAnim.running = 0;
+        startPlayAnim.idle_state = STARTPLAY_IDLE_NONE;
+        if (still_damaged) {
+            game_update_world_hazards_motion(game, dt, now);
+            return;
+        }
+    }
+
     const Uint8 *keys = SDL_GetKeyboardState(NULL);
-    int left_pressed = keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A];
-    int right_pressed = keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D];
+    int left_pressed = game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_DOWN]);
+    int right_pressed = game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_WALK]);
+    int run_pressed = game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_RUN]);
+    int dance_pressed = game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_DANCE]);
     int jump_pressed = startPlayPendingJump ||
-                       keys[SDL_SCANCODE_SPACE] ||
-                       keys[SDL_SCANCODE_UP] ||
-                       keys[SDL_SCANCODE_W];
+                       game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_JUMP]);
     int has_move_input = left_pressed || right_pressed;
 
     if (jump_pressed && !startPlayJumping) {
@@ -438,6 +578,10 @@ void StartPlay_LectureEntree(Game *game) {
         start_play_begin_jump(jump_dir, now);
     }
     startPlayPendingJump = 0;
+
+    if (dance_pressed && !has_move_input && !startPlayJumping) {
+        start_play_trigger_dance(now);
+    }
 
     if (!startPlayJumping && has_move_input) {
         int was_idle = (startPlayAnim.idle_state != STARTPLAY_IDLE_NONE);
@@ -457,17 +601,21 @@ void StartPlay_LectureEntree(Game *game) {
     }
 
     double hold_factor = 1.0 + ((double)startPlayAnim.move_hold_ms / STARTPLAY_HOLD_FACTOR_DIV);
+    if (run_pressed && has_move_input) hold_factor = STARTPLAY_HOLD_FACTOR_MAX;
     if (hold_factor > STARTPLAY_HOLD_FACTOR_MAX) hold_factor = STARTPLAY_HOLD_FACTOR_MAX;
     double accel = STARTPLAY_BASE_ACCEL * hold_factor;
+    if (run_pressed && has_move_input) accel = STARTPLAY_RUN_ACCEL;
 
     if (startPlayJumping) {
         startPlayMover.acceleration = 0.0;
         startPlayMover.vitesse = 0.0;
     } else if (left_pressed && !right_pressed) {
         startPlayMover.acceleration = -accel;
+        if (run_pressed) startPlayMover.vitesse = -STARTPLAY_RUN_MAX_SPEED;
         startPlayAnim.facing = -1;
     } else if (right_pressed && !left_pressed) {
         startPlayMover.acceleration = accel;
+        if (run_pressed) startPlayMover.vitesse = STARTPLAY_RUN_MAX_SPEED;
         startPlayAnim.facing = 1;
     } else {
         startPlayMover.acceleration = 0.0;
@@ -478,7 +626,9 @@ void StartPlay_LectureEntree(Game *game) {
     if (!startPlayJumping) start_play_move_mover(dt);
 
     {
-        double max_speed = STARTPLAY_BASE_MAX_SPEED + hold_factor * STARTPLAY_MAX_SPEED_BONUS;
+        double max_speed = (run_pressed && has_move_input)
+            ? STARTPLAY_RUN_MAX_SPEED
+            : STARTPLAY_BASE_MAX_SPEED + hold_factor * STARTPLAY_MAX_SPEED_BONUS;
         if (startPlayMover.vitesse > max_speed) startPlayMover.vitesse = max_speed;
         if (startPlayMover.vitesse < -max_speed) startPlayMover.vitesse = -max_speed;
     }
@@ -487,14 +637,18 @@ void StartPlay_LectureEntree(Game *game) {
         start_play_update_jump(dt, now);
     } else {
         /* Keep the character on a fixed horizontal line when not jumping. */
-        startPlayMover.y = (HEIGHT - 120) / 2.0 + 40.0;
+        startPlayMover.y = STARTPLAY_PLAYER_Y;
         startPlayMover.position_acc.y = (int)lround(startPlayMover.y);
         startPlayPlayerRect.y = startPlayMover.position_acc.y;
     }
 
     startPlayAnim.moving = !startPlayJumping && (has_move_input || fabs(startPlayMover.vitesse) > 8.0);
+    startPlayAnim.running = startPlayAnim.moving && has_move_input && run_pressed;
     if (startPlayMover.vitesse < -8.0) startPlayAnim.facing = -1;
     if (startPlayMover.vitesse > 8.0) startPlayAnim.facing = 1;
+
+    game_sync_start_play_character(game);
+    game_update_world_hazards(game, dt, now);
 
     if (!startPlayJumping && !has_move_input && fabs(startPlayMover.vitesse) < 4.0 &&
         now - startPlayAnim.last_input_tick >= STARTPLAY_IDLE_TRIGGER_MS &&
@@ -521,6 +675,7 @@ void StartPlay_LectureEntree(Game *game) {
         int cols = (startPlayAnim.idle_state == STARTPLAY_IDLE_DANCE) ? startPlayAnim.dance_cols : startPlayAnim.wave_cols;
         int frames = rows * cols;
         Uint32 frame_ms = (startPlayAnim.idle_state == STARTPLAY_IDLE_DANCE) ? 80 : 120;
+        startPlayAnim.running = 0;
         if (frames < 1) frames = 1;
         if (now - startPlayAnim.last_anim_tick >= frame_ms) {
             startPlayAnim.frame_index = (startPlayAnim.frame_index + 1) % frames;
@@ -533,20 +688,30 @@ void StartPlay_LectureEntree(Game *game) {
         int rows = (startPlayAnim.facing < 0) ? startPlayAnim.jump_back_rows : startPlayAnim.jump_rows;
         int cols = (startPlayAnim.facing < 0) ? startPlayAnim.jump_back_cols : startPlayAnim.jump_cols;
         int frames = rows * cols;
+        startPlayAnim.running = 0;
         if (frames < 1) frames = 1;
         if (now - startPlayAnim.last_anim_tick >= 90u) {
             startPlayAnim.frame_index = (startPlayAnim.frame_index + 1) % frames;
             startPlayAnim.last_anim_tick = now;
         }
     } else if (startPlayAnim.moving) {
-        int rows = (startPlayAnim.facing < 0) ? startPlayAnim.walk_back_rows : startPlayAnim.walk_rows;
-        int cols = (startPlayAnim.facing < 0) ? startPlayAnim.walk_back_cols : startPlayAnim.walk_cols;
+        int use_run_sheet = startPlayAnim.running &&
+            ((startPlayAnim.facing < 0 && startPlayAnim.run_back_tex) ||
+             (startPlayAnim.facing >= 0 && startPlayAnim.run_tex));
+        int rows = use_run_sheet
+            ? ((startPlayAnim.facing < 0) ? startPlayAnim.run_back_rows : startPlayAnim.run_rows)
+            : ((startPlayAnim.facing < 0) ? startPlayAnim.walk_back_rows : startPlayAnim.walk_rows);
+        int cols = use_run_sheet
+            ? ((startPlayAnim.facing < 0) ? startPlayAnim.run_back_cols : startPlayAnim.run_cols)
+            : ((startPlayAnim.facing < 0) ? startPlayAnim.walk_back_cols : startPlayAnim.walk_cols);
         int frames = rows * cols;
         Uint32 speed_bonus = startPlayAnim.move_hold_ms / STARTPLAY_WALK_FRAME_BONUS_DIV;
-        Uint32 frame_ms = STARTPLAY_WALK_FRAME_BASE_MS;
+        Uint32 frame_ms = use_run_sheet ? 65u : STARTPLAY_WALK_FRAME_BASE_MS;
         if (speed_bonus > STARTPLAY_WALK_FRAME_BONUS_CAP) speed_bonus = STARTPLAY_WALK_FRAME_BONUS_CAP;
-        frame_ms = (frame_ms > speed_bonus) ? (frame_ms - speed_bonus) : STARTPLAY_WALK_FRAME_MIN_MS;
-        if (frame_ms < STARTPLAY_WALK_FRAME_MIN_MS) frame_ms = STARTPLAY_WALK_FRAME_MIN_MS;
+        if (!use_run_sheet) {
+            frame_ms = (frame_ms > speed_bonus) ? (frame_ms - speed_bonus) : STARTPLAY_WALK_FRAME_MIN_MS;
+            if (frame_ms < STARTPLAY_WALK_FRAME_MIN_MS) frame_ms = STARTPLAY_WALK_FRAME_MIN_MS;
+        }
         if (frames < 1) frames = 1;
         if (now - startPlayAnim.last_anim_tick >= frame_ms) {
             startPlayAnim.frame_index = (startPlayAnim.frame_index + 1) % frames;
@@ -560,6 +725,7 @@ void StartPlay_LectureEntree(Game *game) {
             ? startPlayAnim.stop_back_cols
             : startPlayAnim.stop_cols;
         int frames = rows * cols;
+        startPlayAnim.running = 0;
         if (frames < 1) frames = 1;
         if (now - startPlayAnim.last_anim_tick >= 140u) {
             startPlayAnim.frame_index = (startPlayAnim.frame_index + 1) % frames;
@@ -578,11 +744,28 @@ void StartPlay_Affichage(Game *game, SDL_Renderer *renderer) {
         if (game->startTextTex)
             SDL_RenderCopy(renderer, game->startTextTex, NULL, &game->startTextRect);
     } else {
-        if (game->gameBgTex) SDL_RenderCopy(renderer, game->gameBgTex, NULL, NULL);
+        SDL_Rect scene_rect = {0, 0, WIDTH, HEIGHT};
+        int focus_x = startPlayPlayerRect.x + startPlayPlayerRect.w / 2;
+        int focus_y = startPlayPlayerRect.y + startPlayPlayerRect.h / 2;
+        int ground_line_y = startPlayPlayerRect.y + startPlayPlayerRect.h;
+        SDL_Rect ground_rect = {0, ground_line_y, WIDTH, HEIGHT - ground_line_y};
         SDL_Texture *active_sheet = NULL;
         int rows = 1, cols = 1;
         int frame_w = startPlayPlayerRect.w, frame_h = startPlayPlayerRect.h;
         int reverse_sheet = 0;
+
+        game_sync_start_play_character(game);
+        game_render_background(game, renderer, scene_rect, focus_x, focus_y);
+
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer, 18, 18, 18, 170);
+        SDL_RenderFillRect(renderer, &ground_rect);
+        SDL_SetRenderDrawColor(renderer, 255, 214, 10, 255);
+        SDL_RenderDrawLine(renderer, 0, ground_line_y, WIDTH, ground_line_y);
+
+        if (!is_duo) {
+            game_render_world_hazards(game, renderer);
+        }
 
         if (startPlayJumping) {
             active_sheet = (startPlayAnim.facing < 0) ? startPlayAnim.jump_back_tex : startPlayAnim.jump_tex;
@@ -619,15 +802,30 @@ void StartPlay_Affichage(Game *game, SDL_Renderer *renderer) {
                 frame_h = startPlayAnim.stop_frame_h;
             }
         } else {
-            active_sheet = (startPlayAnim.facing < 0) ? startPlayAnim.walk_back_tex : startPlayAnim.walk_tex;
-            rows = (startPlayAnim.facing < 0) ? startPlayAnim.walk_back_rows : startPlayAnim.walk_rows;
-            cols = (startPlayAnim.facing < 0) ? startPlayAnim.walk_back_cols : startPlayAnim.walk_cols;
-            frame_w = (startPlayAnim.facing < 0) ? startPlayAnim.walk_back_frame_w : startPlayAnim.walk_frame_w;
-            frame_h = (startPlayAnim.facing < 0) ? startPlayAnim.walk_back_frame_h : startPlayAnim.walk_frame_h;
+            int use_run_sheet = startPlayAnim.running &&
+                ((startPlayAnim.facing < 0 && startPlayAnim.run_back_tex) ||
+                 (startPlayAnim.facing >= 0 && startPlayAnim.run_tex));
+            active_sheet = use_run_sheet
+                ? ((startPlayAnim.facing < 0) ? startPlayAnim.run_back_tex : startPlayAnim.run_tex)
+                : ((startPlayAnim.facing < 0) ? startPlayAnim.walk_back_tex : startPlayAnim.walk_tex);
+            rows = use_run_sheet
+                ? ((startPlayAnim.facing < 0) ? startPlayAnim.run_back_rows : startPlayAnim.run_rows)
+                : ((startPlayAnim.facing < 0) ? startPlayAnim.walk_back_rows : startPlayAnim.walk_rows);
+            cols = use_run_sheet
+                ? ((startPlayAnim.facing < 0) ? startPlayAnim.run_back_cols : startPlayAnim.run_cols)
+                : ((startPlayAnim.facing < 0) ? startPlayAnim.walk_back_cols : startPlayAnim.walk_cols);
+            frame_w = use_run_sheet
+                ? ((startPlayAnim.facing < 0) ? startPlayAnim.run_back_frame_w : startPlayAnim.run_frame_w)
+                : ((startPlayAnim.facing < 0) ? startPlayAnim.walk_back_frame_w : startPlayAnim.walk_frame_w);
+            frame_h = use_run_sheet
+                ? ((startPlayAnim.facing < 0) ? startPlayAnim.run_back_frame_h : startPlayAnim.run_frame_h)
+                : ((startPlayAnim.facing < 0) ? startPlayAnim.walk_back_frame_h : startPlayAnim.walk_frame_h);
             reverse_sheet = (startPlayAnim.facing < 0);
         }
 
-        if (active_sheet && rows > 0 && cols > 0 && frame_w > 0 && frame_h > 0) {
+        if (game && game->gameCharacter.damageActive) {
+            game_draw_character(renderer, &game->gameCharacter);
+        } else if (active_sheet && rows > 0 && cols > 0 && frame_w > 0 && frame_h > 0) {
             int frame_count = rows * cols;
             int draw_frame = startPlayAnim.frame_index % frame_count;
             if (reverse_sheet) draw_frame = frame_count - 1 - draw_frame;
@@ -704,10 +902,13 @@ void StartPlay_Affichage(Game *game, SDL_Renderer *renderer) {
             SDL_RenderCopy(renderer, startPlayAnim.coin_tex, NULL, &coin_draw);
         }
     }
+
+    if (elapsed >= 2000 && !is_duo) {
+        game_render_minimap_overlay(game, renderer, 0, solo_tex, &startPlayPlayerRect);
+    }
 }
 
 void StartPlay_MiseAJour(Game *game) {
-    (void)game;
     if (startPlayPlayerRect.x < 0) startPlayPlayerRect.x = 0;
     if (startPlayPlayerRect.y < 0) startPlayPlayerRect.y = 0;
     if (startPlayPlayerRect.x + startPlayPlayerRect.w > WIDTH)
@@ -718,12 +919,15 @@ void StartPlay_MiseAJour(Game *game) {
     startPlayMover.x = (double)startPlayPlayerRect.x;
     startPlayMover.y = (double)startPlayPlayerRect.y;
     startPlayMover.position_acc = startPlayPlayerRect;
+    game_sync_start_play_character(game);
     SDL_Delay(16);
 }
 
 void StartPlay_Cleanup(void) {
     if (startPlayAnim.walk_tex) SDL_DestroyTexture(startPlayAnim.walk_tex);
     if (startPlayAnim.walk_back_tex) SDL_DestroyTexture(startPlayAnim.walk_back_tex);
+    if (startPlayAnim.run_tex) SDL_DestroyTexture(startPlayAnim.run_tex);
+    if (startPlayAnim.run_back_tex) SDL_DestroyTexture(startPlayAnim.run_back_tex);
     if (startPlayAnim.jump_tex) SDL_DestroyTexture(startPlayAnim.jump_tex);
     if (startPlayAnim.jump_back_tex) SDL_DestroyTexture(startPlayAnim.jump_back_tex);
     if (startPlayAnim.stop_tex) SDL_DestroyTexture(startPlayAnim.stop_tex);
@@ -749,6 +953,20 @@ static Uint32 game_last_jump_debug_tick = 0;
 #define GAME_SPRITE_CACHE_MAX 48
 #define GAME_CHARACTER_BOX_W 170
 #define GAME_CHARACTER_BOX_H 180
+#define GAME_MONO_GROUND_LINE_Y 544
+#define GAME_RUN_SPEED_BONUS 12
+#define GAME_DAMAGE_MS 850u
+#define GAME_LAY_DOWN_MS 1250u
+#define GAME_DAMAGE_INVULN_MS 1100u
+#define GAME_ENEMY_SHEET_ROWS 5
+#define GAME_ENEMY_SHEET_COLS 5
+#define GAME_ENEMY_BOX_W 155
+#define GAME_ENEMY_BOX_H 155
+#define GAME_ENEMY_ALERT_DISTANCE 285
+#define GAME_ENEMY_FOLLOW_SPEED 3
+#define GAME_ENEMY_FLEE_SPEED 5
+#define GAME_OBSTACLE_RIGHT 0
+#define GAME_OBSTACLE_LEFT 1
 
 static const SDL_Rect game_walk_crop = {88, 48, 88, 167};
 static const SDL_Rect game_walk_back_crop = {80, 46, 91, 169};
@@ -759,16 +977,38 @@ static Uint32 duoStartTime = 0;
 #define DUO_DISPLAY_SAME 0
 #define DUO_DISPLAY_VERTICAL 1
 #define DUO_DISPLAY_HORIZONTAL 2
+#define DUO_BACKGROUND_FIXED 0
+#define DUO_BACKGROUND_SCROLLING 1
+#define GAME_MINIMAP_ZOOM_MIN 0.5f
+#define GAME_MINIMAP_ZOOM_MAX 2.0f
+#define GAME_MINIMAP_ZOOM_STEP 0.1f
+#define GAME_MINIMAP_MARGIN 18
+#define GAME_MINIMAP_W 220
+#define GAME_MINIMAP_H 130
+#define GAME_MINIMAP_FRAME_PAD 18
+#define GAME_MINIMAP_PADDING 2
+#define GAME_MINIMAP_MARKER_MIN 6
+#define GAME_MINIMAP_MARKER_MAX 16
+#define GAME_MINIMAP_SPLIT_DISTANCE 320
+#define GAME_MINIMAP_LOCK_BOX 42
+#define GAME_MINIMAP_LOCK_ICON 26
+#define GAME_MINIMAP_LOCK_INSET 6
 
 static SDL_Rect display_choice_horizontal_rect = {0, 0, 0, 0};
 static SDL_Rect display_choice_vertical_rect = {0, 0, 0, 0};
 static SDL_Rect display_choice_same_rect = {0, 0, 0, 0};
+static SDL_Rect display_choice_bg_fixed_rect = {0, 0, 0, 0};
+static SDL_Rect display_choice_bg_scroll_rect = {0, 0, 0, 0};
 static int display_choice_hover_horizontal = 0;
 static int display_choice_hover_vertical = 0;
 static int display_choice_hover_same = 0;
+static int display_choice_hover_bg_fixed = 0;
+static int display_choice_hover_bg_scroll = 0;
 static int display_choice_last_hover_horizontal = 0;
 static int display_choice_last_hover_vertical = 0;
 static int display_choice_last_hover_same = 0;
+static int display_choice_last_hover_bg_fixed = 0;
+static int display_choice_last_hover_bg_scroll = 0;
 
 typedef struct {
     SDL_Texture *texture;
@@ -777,6 +1017,12 @@ typedef struct {
 } GameSpriteCacheEntry;
 
 static GameSpriteCacheEntry game_sprite_cache[GAME_SPRITE_CACHE_MAX];
+static SDL_Point game_minimap_top_left = {0, 0};
+static int game_minimap_layout_initialized = 0;
+static int game_minimap_drag_unlocked = 0;
+static int game_minimap_dragging = 0;
+static int game_minimap_drag_offset_x = 0;
+static int game_minimap_drag_offset_y = 0;
 
 static void game_draw_center_text(SDL_Renderer *renderer, TTF_Font *font, const char *text,
                                   SDL_Color color, SDL_Rect box) {
@@ -833,11 +1079,352 @@ static void duo_render_time(Game *game, SDL_Renderer *renderer, int x, int y) {
     game_draw_text_at(renderer, game->font, buf, (SDL_Color){255, 255, 255, 255}, x, y);
 }
 
+static SDL_Texture *game_active_background(Game *game) {
+    if (!game) return NULL;
+    if (game->gameBgTex) return game->gameBgTex;
+    return game->background;
+}
+
+static void game_render_background(Game *game, SDL_Renderer *renderer, SDL_Rect dst, int focus_x, int focus_y) {
+    SDL_Texture *bg;
+    int tex_w = 0;
+    int tex_h = 0;
+    int render_w;
+    int render_h;
+    int offset_x = 0;
+    int offset_y = 0;
+    int start_x;
+    int start_y;
+    int scrolling_enabled;
+    int clip_was_enabled;
+    SDL_Rect old_clip = {0, 0, 0, 0};
+
+    if (!renderer || !game) return;
+    bg = game_active_background(game);
+    if (!bg) return;
+
+    clip_was_enabled = SDL_RenderIsClipEnabled(renderer);
+    if (clip_was_enabled) SDL_RenderGetClipRect(renderer, &old_clip);
+    SDL_RenderSetClipRect(renderer, &dst);
+
+    scrolling_enabled = (game->player_mode == 1) ||
+                        (game->duo_background_mode == DUO_BACKGROUND_SCROLLING);
+    if (!scrolling_enabled) {
+        SDL_RenderCopy(renderer, bg, NULL, &dst);
+        if (clip_was_enabled) SDL_RenderSetClipRect(renderer, &old_clip);
+        else SDL_RenderSetClipRect(renderer, NULL);
+        return;
+    }
+
+    if (SDL_QueryTexture(bg, NULL, NULL, &tex_w, &tex_h) != 0 || tex_w <= 0 || tex_h <= 0) {
+        SDL_RenderCopy(renderer, bg, NULL, &dst);
+        if (clip_was_enabled) SDL_RenderSetClipRect(renderer, &old_clip);
+        else SDL_RenderSetClipRect(renderer, NULL);
+        return;
+    }
+
+    render_w = (int)lround(((double)tex_w * (double)dst.h) / (double)tex_h);
+    render_h = dst.h;
+    if (render_w < dst.w) render_w = dst.w;
+    if (render_w < 1) render_w = dst.w;
+    if (render_h < dst.h) render_h = dst.h;
+    if (render_h < 1) render_h = dst.h;
+
+    if (focus_x < 0) focus_x = 0;
+    if (focus_x > WIDTH) focus_x = WIDTH;
+    if (focus_y < 0) focus_y = 0;
+    if (focus_y > HEIGHT) focus_y = HEIGHT;
+    if (render_w > 1) {
+        offset_x = (int)lround(((double)focus_x / (double)WIDTH) * (double)(render_w - 1));
+        offset_x %= render_w;
+        if (offset_x < 0) offset_x += render_w;
+    }
+    if (render_h > 1) {
+        offset_y = (int)lround(((double)focus_y / (double)HEIGHT) * (double)(render_h - 1));
+        offset_y %= render_h;
+        if (offset_y < 0) offset_y += render_h;
+    }
+
+    start_x = dst.x - offset_x;
+    start_y = dst.y - offset_y;
+    while (start_x > dst.x) start_x -= render_w;
+    while (start_y > dst.y) start_y -= render_h;
+
+    for (int y = start_y; y < dst.y + dst.h; y += render_h) {
+        for (int x = start_x; x < dst.x + dst.w; x += render_w) {
+            SDL_Rect tile = {x, y, render_w, render_h};
+            SDL_RenderCopy(renderer, bg, NULL, &tile);
+        }
+    }
+
+    if (clip_was_enabled) SDL_RenderSetClipRect(renderer, &old_clip);
+    else SDL_RenderSetClipRect(renderer, NULL);
+}
+
+static int game_clampi(int value, int min_value, int max_value) {
+    if (value < min_value) return min_value;
+    if (value > max_value) return max_value;
+    return value;
+}
+
+static void game_minimap_ensure_layout(void) {
+    if (game_minimap_layout_initialized) return;
+    game_minimap_top_left.x = WIDTH - GAME_MINIMAP_W - GAME_MINIMAP_MARGIN;
+    game_minimap_top_left.y = GAME_MINIMAP_MARGIN;
+    game_minimap_layout_initialized = 1;
+}
+
+static void game_minimap_set_top_left(int x, int y) {
+    int min_x = GAME_MINIMAP_FRAME_PAD;
+    int min_y = GAME_MINIMAP_FRAME_PAD;
+    int max_x = WIDTH - GAME_MINIMAP_W - GAME_MINIMAP_FRAME_PAD;
+    int max_y = HEIGHT - GAME_MINIMAP_H - GAME_MINIMAP_FRAME_PAD;
+    if (max_x < min_x) max_x = min_x;
+    if (max_y < min_y) max_y = min_y;
+    game_minimap_top_left.x = game_clampi(x, min_x, max_x);
+    game_minimap_top_left.y = game_clampi(y, min_y, max_y);
+}
+
+static SDL_Rect game_minimap_rect(void) {
+    game_minimap_ensure_layout();
+    return (SDL_Rect){game_minimap_top_left.x, game_minimap_top_left.y, GAME_MINIMAP_W, GAME_MINIMAP_H};
+}
+
+static SDL_Rect game_minimap_frame_rect(SDL_Rect minimap_rect) {
+    return (SDL_Rect){
+        minimap_rect.x - GAME_MINIMAP_FRAME_PAD,
+        minimap_rect.y - GAME_MINIMAP_FRAME_PAD,
+        minimap_rect.w + GAME_MINIMAP_FRAME_PAD * 2,
+        minimap_rect.h + GAME_MINIMAP_FRAME_PAD * 2
+    };
+}
+
+static SDL_Rect game_minimap_lock_rect(SDL_Rect frame_rect) {
+    return (SDL_Rect){
+        frame_rect.x + GAME_MINIMAP_LOCK_INSET,
+        frame_rect.y + GAME_MINIMAP_LOCK_INSET,
+        GAME_MINIMAP_LOCK_BOX,
+        GAME_MINIMAP_LOCK_BOX
+    };
+}
+
+static int game_handle_minimap_mouse_event(const SDL_Event *e) {
+    SDL_Rect minimap_rect;
+    SDL_Rect frame_rect;
+    SDL_Rect lock_rect;
+    int mx;
+    int my;
+
+    if (!e) return 0;
+
+    if (e->type == SDL_MOUSEBUTTONDOWN && e->button.button == SDL_BUTTON_LEFT) {
+        mx = e->button.x;
+        my = e->button.y;
+        minimap_rect = game_minimap_rect();
+        frame_rect = game_minimap_frame_rect(minimap_rect);
+        lock_rect = game_minimap_lock_rect(frame_rect);
+
+        if (ps_point_in_rect(lock_rect, mx, my)) {
+            game_minimap_drag_unlocked = !game_minimap_drag_unlocked;
+            if (!game_minimap_drag_unlocked) game_minimap_dragging = 0;
+            return 1;
+        }
+        if (game_minimap_drag_unlocked && ps_point_in_rect(frame_rect, mx, my)) {
+            game_minimap_dragging = 1;
+            game_minimap_drag_offset_x = mx - minimap_rect.x;
+            game_minimap_drag_offset_y = my - minimap_rect.y;
+            return 1;
+        }
+    }
+    if (e->type == SDL_MOUSEBUTTONUP && e->button.button == SDL_BUTTON_LEFT) {
+        game_minimap_dragging = 0;
+        return 1;
+    }
+    if (e->type == SDL_MOUSEMOTION && game_minimap_dragging && game_minimap_drag_unlocked) {
+        game_minimap_set_top_left(e->motion.x - game_minimap_drag_offset_x,
+                                  e->motion.y - game_minimap_drag_offset_y);
+        return 1;
+    }
+    return 0;
+}
+
+static SDL_Rect game_world_to_minimap_rect(SDL_Rect world_pos, SDL_Rect minimap_rect, float zoom) {
+    SDL_Rect marker;
+    double scale_x;
+    double scale_y;
+    int max_x;
+    int max_y;
+
+    if (zoom < GAME_MINIMAP_ZOOM_MIN) zoom = GAME_MINIMAP_ZOOM_MIN;
+    if (zoom > GAME_MINIMAP_ZOOM_MAX) zoom = GAME_MINIMAP_ZOOM_MAX;
+
+    scale_x = ((double)minimap_rect.w / (double)WIDTH) * (double)zoom;
+    scale_y = ((double)minimap_rect.h / (double)HEIGHT) * (double)zoom;
+
+    marker.x = minimap_rect.x + (int)lround((double)world_pos.x * scale_x);
+    marker.y = minimap_rect.y + (int)lround((double)world_pos.y * scale_y);
+    marker.w = (int)lround((double)world_pos.w * scale_x);
+    marker.h = (int)lround((double)world_pos.h * scale_y);
+
+    if (marker.w < GAME_MINIMAP_MARKER_MIN) marker.w = GAME_MINIMAP_MARKER_MIN;
+    if (marker.h < GAME_MINIMAP_MARKER_MIN) marker.h = GAME_MINIMAP_MARKER_MIN;
+    if (marker.w > GAME_MINIMAP_MARKER_MAX) marker.w = GAME_MINIMAP_MARKER_MAX;
+    if (marker.h > GAME_MINIMAP_MARKER_MAX) marker.h = GAME_MINIMAP_MARKER_MAX;
+
+    max_x = minimap_rect.x + minimap_rect.w - marker.w - GAME_MINIMAP_PADDING;
+    max_y = minimap_rect.y + minimap_rect.h - marker.h - GAME_MINIMAP_PADDING;
+    if (max_x < minimap_rect.x + GAME_MINIMAP_PADDING) {
+        max_x = minimap_rect.x + GAME_MINIMAP_PADDING;
+    }
+    if (max_y < minimap_rect.y + GAME_MINIMAP_PADDING) {
+        max_y = minimap_rect.y + GAME_MINIMAP_PADDING;
+    }
+
+    marker.x = game_clampi(marker.x, minimap_rect.x + GAME_MINIMAP_PADDING, max_x);
+    marker.y = game_clampi(marker.y, minimap_rect.y + GAME_MINIMAP_PADDING, max_y);
+    return marker;
+}
+
+static void game_draw_minimap_marker(SDL_Renderer *renderer, SDL_Texture *texture,
+                                     SDL_Rect marker, SDL_Color fallback) {
+    if (!renderer) return;
+    if (texture) {
+        SDL_RenderCopy(renderer, texture, NULL, &marker);
+        return;
+    }
+    SDL_SetRenderDrawColor(renderer, fallback.r, fallback.g, fallback.b, fallback.a);
+    SDL_RenderFillRect(renderer, &marker);
+}
+
+static void game_render_minimap_overlay(Game *game, SDL_Renderer *renderer, int include_second_player,
+                                        SDL_Texture *primary_marker_tex, const SDL_Rect *primary_pos_override) {
+    SDL_Rect frame_rect;
+    SDL_Rect minimap_rect;
+    SDL_Rect lock_rect;
+    SDL_Rect lock_icon_rect;
+    SDL_Rect panel_a;
+    SDL_Rect panel_b;
+    SDL_Rect p1_marker;
+    SDL_Rect p2_marker;
+    SDL_Rect p1_pos;
+    SDL_Texture *lock_tex;
+    int focus_x;
+    int focus_y;
+    int split_panels = 0;
+    int p1_center_x;
+    int p1_center_y;
+    int p2_center_x;
+    int p2_center_y;
+    int dx;
+    int dy;
+
+    if (!game || !renderer) return;
+
+    minimap_rect = game_minimap_rect();
+    frame_rect = game_minimap_frame_rect(minimap_rect);
+    p1_pos = primary_pos_override ? *primary_pos_override : game->gameCharacter.position;
+    p1_center_x = p1_pos.x + p1_pos.w / 2;
+    p1_center_y = p1_pos.y + p1_pos.h / 2;
+    p2_center_x = game->gameCharacter2.position.x + game->gameCharacter2.position.w / 2;
+    p2_center_y = game->gameCharacter2.position.y + game->gameCharacter2.position.h / 2;
+    focus_x = p1_center_x;
+    focus_y = p1_center_y;
+    if (include_second_player) focus_x = (p1_center_x + p2_center_x) / 2;
+    if (include_second_player) focus_y = (p1_center_y + p2_center_y) / 2;
+
+    if (game->miniMapFrameTex) SDL_RenderCopy(renderer, game->miniMapFrameTex, NULL, &frame_rect);
+
+    panel_a = minimap_rect;
+    panel_b = minimap_rect;
+    if (include_second_player) {
+        dx = p1_center_x - p2_center_x;
+        dy = p1_center_y - p2_center_y;
+        split_panels = ((dx * dx + dy * dy) > (GAME_MINIMAP_SPLIT_DISTANCE * GAME_MINIMAP_SPLIT_DISTANCE));
+    }
+    if (split_panels) {
+        panel_a.w = minimap_rect.w / 2;
+        panel_b.x = minimap_rect.x + panel_a.w;
+        panel_b.w = minimap_rect.w - panel_a.w;
+        if (panel_a.w < 8 || panel_b.w < 8) {
+            split_panels = 0;
+            panel_a = minimap_rect;
+            panel_b = minimap_rect;
+        }
+    }
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    if (split_panels) {
+        SDL_SetRenderDrawColor(renderer, 12, 14, 20, 210);
+        SDL_RenderFillRect(renderer, &panel_a);
+        SDL_RenderFillRect(renderer, &panel_b);
+        game_render_background(game, renderer, panel_a, p1_center_x, p1_center_y);
+        game_render_background(game, renderer, panel_b, p2_center_x, p2_center_y);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 65);
+        SDL_RenderFillRect(renderer, &panel_a);
+        SDL_RenderFillRect(renderer, &panel_b);
+        SDL_SetRenderDrawColor(renderer, 235, 235, 235, 190);
+        SDL_RenderDrawLine(renderer, panel_b.x, minimap_rect.y, panel_b.x, minimap_rect.y + minimap_rect.h);
+    } else {
+        SDL_SetRenderDrawColor(renderer, 12, 14, 20, 210);
+        SDL_RenderFillRect(renderer, &minimap_rect);
+        game_render_background(game, renderer, minimap_rect, focus_x, focus_y);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 65);
+        SDL_RenderFillRect(renderer, &minimap_rect);
+    }
+
+    p1_marker = game_world_to_minimap_rect(p1_pos,
+                                           split_panels ? panel_a : minimap_rect,
+                                           game->minimap_zoom);
+    game_draw_minimap_marker(renderer,
+                             primary_marker_tex ? primary_marker_tex : game->player1Tex,
+                             p1_marker, (SDL_Color){235, 84, 84, 255});
+
+    if (include_second_player) {
+        p2_marker = game_world_to_minimap_rect(game->gameCharacter2.position,
+                                               split_panels ? panel_b : minimap_rect,
+                                               game->minimap_zoom);
+        game_draw_minimap_marker(renderer, game->player2Tex, p2_marker, (SDL_Color){74, 140, 255, 255});
+    }
+
+    if (!game->miniMapFrameTex) {
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        for (int i = 0; i < 3; i++) {
+            SDL_Rect border = {
+                frame_rect.x - i, frame_rect.y - i,
+                frame_rect.w + i * 2, frame_rect.h + i * 2
+            };
+            SDL_RenderDrawRect(renderer, &border);
+        }
+    }
+
+    lock_rect = game_minimap_lock_rect(frame_rect);
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 235);
+    SDL_RenderFillRect(renderer, &lock_rect);
+    SDL_SetRenderDrawColor(renderer, 25, 25, 25, 210);
+    SDL_RenderDrawRect(renderer, &lock_rect);
+
+    lock_tex = game_minimap_drag_unlocked ? game->miniMapLockOpenTex : game->miniMapLockClosedTex;
+    lock_icon_rect = (SDL_Rect){
+        lock_rect.x + (lock_rect.w - GAME_MINIMAP_LOCK_ICON) / 2,
+        lock_rect.y + (lock_rect.h - GAME_MINIMAP_LOCK_ICON) / 2,
+        GAME_MINIMAP_LOCK_ICON,
+        GAME_MINIMAP_LOCK_ICON
+    };
+    if (lock_tex) SDL_RenderCopy(renderer, lock_tex, NULL, &lock_icon_rect);
+}
+
 static void display_choice_layout(void) {
     const int box_w = 270;
     const int box_h = 180;
     const int spacing = 70;
-    const int top_y = 245;
+    const int top_y = 238;
+    const int bg_w = 220;
+    const int bg_h = 44;
+    const int bg_gap = 28;
+    const int bg_y = 184;
+
+    display_choice_bg_fixed_rect = (SDL_Rect){WIDTH / 2 - bg_w - (bg_gap / 2), bg_y, bg_w, bg_h};
+    display_choice_bg_scroll_rect = (SDL_Rect){WIDTH / 2 + (bg_gap / 2), bg_y, bg_w, bg_h};
     display_choice_horizontal_rect = (SDL_Rect){WIDTH / 2 - box_w - spacing, top_y, box_w, box_h};
     display_choice_vertical_rect = (SDL_Rect){WIDTH / 2 + spacing, top_y, box_w, box_h};
     display_choice_same_rect = (SDL_Rect){WIDTH / 2 - box_w / 2, top_y + box_h + 48, box_w, box_h};
@@ -912,6 +1499,24 @@ static void display_choice_draw_card(SDL_Renderer *renderer, TTF_Font *font, SDL
     game_draw_center_text(renderer, font, title, hover ? white : soft, label_box);
 }
 
+static void display_choice_draw_bg_toggle(SDL_Renderer *renderer, TTF_Font *font, SDL_Rect rect,
+                                          const char *label, int hover, int selected) {
+    SDL_Color text_color = selected ? (SDL_Color){255, 255, 255, 255} : (SDL_Color){220, 230, 238, 255};
+    Uint8 base_r = selected ? 66 : 22;
+    Uint8 base_g = selected ? 150 : 32;
+    Uint8 base_b = selected ? 95 : 42;
+
+    if (!renderer) return;
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, base_r, base_g, base_b, hover ? 240 : 195);
+    SDL_RenderFillRect(renderer, &rect);
+    SDL_SetRenderDrawColor(renderer, selected ? 255 : 188, selected ? 255 : 206, selected ? 255 : 216, 255);
+    SDL_RenderDrawRect(renderer, &rect);
+
+    game_draw_center_text(renderer, font, label, text_color, rect);
+}
+
 static void display_choice_start_game(Game *game, int mode) {
     if (!game) return;
     game->duo_display_mode = mode;
@@ -935,17 +1540,23 @@ void DisplayChoice_LectureEntree(Game *game) {
             display_choice_hover_horizontal = ps_point_in_rect(display_choice_horizontal_rect, mx, my);
             display_choice_hover_vertical = ps_point_in_rect(display_choice_vertical_rect, mx, my);
             display_choice_hover_same = ps_point_in_rect(display_choice_same_rect, mx, my);
+            display_choice_hover_bg_fixed = ps_point_in_rect(display_choice_bg_fixed_rect, mx, my);
+            display_choice_hover_bg_scroll = ps_point_in_rect(display_choice_bg_scroll_rect, mx, my);
 
             if (game->click &&
                 ((display_choice_hover_horizontal && !display_choice_last_hover_horizontal) ||
                  (display_choice_hover_vertical && !display_choice_last_hover_vertical) ||
-                 (display_choice_hover_same && !display_choice_last_hover_same))) {
+                 (display_choice_hover_same && !display_choice_last_hover_same) ||
+                 (display_choice_hover_bg_fixed && !display_choice_last_hover_bg_fixed) ||
+                 (display_choice_hover_bg_scroll && !display_choice_last_hover_bg_scroll))) {
                 Mix_PlayChannel(-1, game->click, 0);
             }
 
             display_choice_last_hover_horizontal = display_choice_hover_horizontal;
             display_choice_last_hover_vertical = display_choice_hover_vertical;
             display_choice_last_hover_same = display_choice_hover_same;
+            display_choice_last_hover_bg_fixed = display_choice_hover_bg_fixed;
+            display_choice_last_hover_bg_scroll = display_choice_hover_bg_scroll;
         }
 
         if (e.type == SDL_KEYDOWN) {
@@ -953,6 +1564,14 @@ void DisplayChoice_LectureEntree(Game *game) {
             if (sym == SDLK_ESCAPE) {
                 Game_SetSubState(game, STATE_PLAYER_CONFIG);
                 return;
+            }
+            if (sym == SDLK_f || sym == SDLK_4 || sym == SDLK_KP_4) {
+                game->duo_background_mode = DUO_BACKGROUND_FIXED;
+                continue;
+            }
+            if (sym == SDLK_r || sym == SDLK_5 || sym == SDLK_KP_5) {
+                game->duo_background_mode = DUO_BACKGROUND_SCROLLING;
+                continue;
             }
             if (sym == SDLK_1 || sym == SDLK_KP_1 || sym == SDLK_h) {
                 display_choice_start_game(game, DUO_DISPLAY_HORIZONTAL);
@@ -972,6 +1591,14 @@ void DisplayChoice_LectureEntree(Game *game) {
             int mx = e.button.x;
             int my = e.button.y;
             if (game->click) Mix_PlayChannel(-1, game->click, 0);
+            if (ps_point_in_rect(display_choice_bg_fixed_rect, mx, my)) {
+                game->duo_background_mode = DUO_BACKGROUND_FIXED;
+                continue;
+            }
+            if (ps_point_in_rect(display_choice_bg_scroll_rect, mx, my)) {
+                game->duo_background_mode = DUO_BACKGROUND_SCROLLING;
+                continue;
+            }
             if (ps_point_in_rect(display_choice_horizontal_rect, mx, my)) {
                 display_choice_start_game(game, DUO_DISPLAY_HORIZONTAL);
                 return;
@@ -994,8 +1621,9 @@ void DisplayChoice_MiseAJour(Game *game) {
 
 void DisplayChoice_Affichage(Game *game, SDL_Renderer *renderer) {
     SDL_Rect overlay = {0, 0, WIDTH, HEIGHT};
-    SDL_Rect title_box = {(WIDTH - 760) / 2, 82, 760, 58};
-    SDL_Rect hint_box = {(WIDTH - 880) / 2, 148, 880, 44};
+    SDL_Rect title_box = {(WIDTH - 760) / 2, 68, 760, 58};
+    SDL_Rect hint_box = {(WIDTH - 960) / 2, 124, 960, 44};
+    SDL_Rect bg_label_box = {(WIDTH - 420) / 2, 154, 420, 34};
     SDL_Color white = {255, 255, 255, 255};
     SDL_Color soft = {220, 230, 238, 255};
 
@@ -1015,8 +1643,16 @@ void DisplayChoice_Affichage(Game *game, SDL_Renderer *renderer) {
 
     game_draw_center_text(renderer, game->font, "Choose display mode", white, title_box);
     game_draw_center_text(renderer, game->font,
-                          "Horizontal, vertical, or both players on the same screen",
+                          "Pick a display mode, then choose fixed or scrolling background",
                           soft, hint_box);
+    game_draw_center_text(renderer, game->font, "Background behavior", soft, bg_label_box);
+
+    display_choice_draw_bg_toggle(renderer, game->font, display_choice_bg_fixed_rect,
+                                  "Fixed", display_choice_hover_bg_fixed,
+                                  game->duo_background_mode == DUO_BACKGROUND_FIXED);
+    display_choice_draw_bg_toggle(renderer, game->font, display_choice_bg_scroll_rect,
+                                  "Scrolling", display_choice_hover_bg_scroll,
+                                  game->duo_background_mode == DUO_BACKGROUND_SCROLLING);
 
     display_choice_draw_card(renderer, game->font, display_choice_horizontal_rect,
                              display_choice_hover_horizontal,
@@ -1028,8 +1664,8 @@ void DisplayChoice_Affichage(Game *game, SDL_Renderer *renderer) {
                              display_choice_hover_same,
                              DUO_DISPLAY_SAME, "Same Screen");
 
-    game_draw_center_text(renderer, game->font, "ESC to go back",
-                          soft, (SDL_Rect){(WIDTH - 320) / 2, HEIGHT - 54, 320, 36});
+    game_draw_center_text(renderer, game->font, "1/2/3 select display | F fixed | R scrolling | ESC back",
+                          soft, (SDL_Rect){(WIDTH - 860) / 2, HEIGHT - 54, 860, 36});
 }
 
 static GameSpriteCacheEntry *game_find_sprite_entry(SDL_Texture *texture) {
@@ -1314,6 +1950,14 @@ static void game_destroy_character_textures(Personnage *p) {
         game_forget_sprite_texture(p->jumpBackTexture);
         SDL_DestroyTexture(p->jumpBackTexture);
     }
+    if (p->damageTexture) {
+        game_forget_sprite_texture(p->damageTexture);
+        SDL_DestroyTexture(p->damageTexture);
+    }
+    if (p->layDownTexture) {
+        game_forget_sprite_texture(p->layDownTexture);
+        SDL_DestroyTexture(p->layDownTexture);
+    }
     p->idleTexture = NULL;
     p->idleBackTexture = NULL;
     p->walkTexture = NULL;
@@ -1322,6 +1966,8 @@ static void game_destroy_character_textures(Personnage *p) {
     p->runBackTexture = NULL;
     p->jumpTexture = NULL;
     p->jumpBackTexture = NULL;
+    p->damageTexture = NULL;
+    p->layDownTexture = NULL;
 }
 
 static void game_load_harry_character(SDL_Renderer *renderer, Personnage *p) {
@@ -1331,9 +1977,11 @@ static void game_load_harry_character(SDL_Renderer *renderer, Personnage *p) {
     p->walkTexture = game_load_sprite_texture(renderer, "spritesheet_characters/mr_harry_walk_cycle_transparent.png");
     p->walkBackTexture = game_load_sprite_texture(renderer, "spritesheet_characters/mr_harry_walk_cycle_back_transparent.png");
     p->runTexture = game_load_sprite_texture(renderer, "spritesheet_characters/mr_harry_run.png");
-    p->runBackTexture = NULL;
+    p->runBackTexture = game_load_sprite_texture(renderer, "spritesheet_characters/mr harry-run -reverse.png");
     p->jumpTexture = game_load_sprite_texture(renderer, "spritesheet_characters/mr_harry_jump_transparent.png");
     p->jumpBackTexture = game_load_sprite_texture(renderer, "spritesheet_characters/mr_harry_jump_back_transparent.png");
+    p->damageTexture = game_load_sprite_texture(renderer, "spritesheet_characters/harry-damage.png");
+    p->layDownTexture = game_load_sprite_texture(renderer, "spritesheet_characters/harry-lay_down.png");
 }
 
 static void game_load_marvin_character(SDL_Renderer *renderer, Personnage *p) {
@@ -1350,6 +1998,8 @@ static void game_load_marvin_character(SDL_Renderer *renderer, Personnage *p) {
     p->jumpBackTexture = game_load_sprite_texture_first(renderer,
         "spritesheet_characters/marvin-jump-reverse.png",
         "spritesheet_characters/marvin-jump -reverse.png");
+    p->damageTexture = game_load_sprite_texture(renderer, "spritesheet_characters/marvin-damage.png");
+    p->layDownTexture = game_load_sprite_texture(renderer, "spritesheet_characters/marvin-lay_down.png");
 }
 
 static void game_state_reset_character(Personnage *p) {
@@ -1377,6 +2027,9 @@ static void game_state_reset_character(Personnage *p) {
     p->pendingJump = 0;
     p->frameIndex = 0;
     p->lastFrameTick = SDL_GetTicks();
+    p->damageActive = 0;
+    p->damageStartTick = 0;
+    p->damageInvulnUntil = 0;
     game_last_jump_debug_tick = 0;
     game_jump_latch = 0;
 }
@@ -1387,6 +2040,14 @@ static void game_state_reset_character_at(Personnage *p, int x, int facing) {
     p->position.x = x;
     p->facing = facing;
     p->posinitX = p->position.x;
+}
+
+static void game_set_character_ground_line(Personnage *p, int ground_line_y) {
+    if (!p) return;
+    p->groundY = ground_line_y - p->position.h;
+    if (p->groundY < 0) p->groundY = 0;
+    if (!p->up) p->position.y = p->groundY;
+    p->posinit = p->position.y;
 }
 
 static void game_set_movement(Personnage *p, GameMovement movement, Uint32 now) {
@@ -1486,6 +2147,8 @@ static void game_move_jump_up(Personnage *p, Uint32 now) {
     fflush(stdout);
 }
 
+static void game_move_animation(Personnage *p, Uint32 now);
+
 static void game_update_jump(Personnage *p, Uint32 dt, Uint32 now) {
     double t;
     double smooth_t;
@@ -1529,6 +2192,50 @@ static void game_update_jump(Personnage *p, Uint32 dt, Uint32 now) {
     }
 }
 
+static int game_trigger_character_damage(Personnage *p, Uint32 now) {
+    if (!p) return 0;
+    if (p->damageActive || now < p->damageInvulnUntil) return 0;
+
+    p->damageActive = 1;
+    p->damageStartTick = now;
+    p->damageInvulnUntil = now + GAME_DAMAGE_INVULN_MS;
+    p->up = 0;
+    p->jumpPhase = 0;
+    p->pendingJump = 0;
+    p->moving = 0;
+    p->position.y = p->groundY;
+    game_set_movement(p, GAME_MOVE_DAMAGE, now);
+    return 1;
+}
+
+static int game_update_damage_state(Personnage *p, Uint32 now) {
+    Uint32 elapsed;
+
+    if (!p || !p->damageActive) return 0;
+
+    elapsed = now - p->damageStartTick;
+    p->up = 0;
+    p->jumpPhase = 0;
+    p->pendingJump = 0;
+    p->moving = 0;
+    p->position.y = p->groundY;
+
+    if (elapsed >= GAME_DAMAGE_MS + GAME_LAY_DOWN_MS) {
+        p->damageActive = 0;
+        game_set_movement(p, GAME_MOVE_STOP, now);
+        return 0;
+    }
+
+    if (elapsed >= GAME_DAMAGE_MS) {
+        game_set_movement(p, GAME_MOVE_LAY_DOWN, now);
+    } else {
+        game_set_movement(p, GAME_MOVE_DAMAGE, now);
+    }
+
+    game_move_animation(p, now);
+    return 1;
+}
+
 static void game_move_animation(Personnage *p, Uint32 now) {
     Uint32 frame_delay;
     int frame_count;
@@ -1553,6 +2260,14 @@ static void game_move_animation(Personnage *p, Uint32 now) {
             frame_delay = 90u;
             frame_count = GAME_SHEET_COLS;
             break;
+        case GAME_MOVE_DAMAGE:
+            frame_delay = 140u;
+            frame_count = GAME_SHEET_ROWS * GAME_SHEET_COLS;
+            break;
+        case GAME_MOVE_LAY_DOWN:
+            frame_delay = 180u;
+            frame_count = GAME_SHEET_ROWS * GAME_SHEET_COLS;
+            break;
         case GAME_MOVE_WALK:
         case GAME_MOVE_WALK_BACK:
         default:
@@ -1573,6 +2288,12 @@ static void game_update_character_controls(Personnage *p, int left_pressed, int 
                                            Uint32 dt, Uint32 now) {
     if (!p) return;
 
+    if (game_update_damage_state(p, now)) {
+        if (p->position.x < 0) p->position.x = 0;
+        if (p->position.x + p->position.w > WIDTH) p->position.x = WIDTH - p->position.w;
+        return;
+    }
+
     if (jump_pressed && !p->up) {
         if (left_pressed && !right_pressed) game_move_jump_back(p, now);
         else if (right_pressed && !left_pressed) game_move_jump(p, now);
@@ -1584,6 +2305,7 @@ static void game_update_character_controls(Personnage *p, int left_pressed, int 
         game_set_movement(p, (p->facing < 0) ? GAME_MOVE_JUMP_BACK : GAME_MOVE_JUMP, now);
         game_update_jump(p, dt, now);
     } else {
+        p->position.y = p->groundY;
         p->moving = 0;
         if (left_pressed && !right_pressed) {
             if (run_modifier) game_move_run_back(p, run_step, now);
@@ -1607,6 +2329,23 @@ static void game_draw_character(SDL_Renderer *renderer, Personnage *p) {
     if (!renderer || !p) return;
 
     switch ((GameMovement)p->movementState) {
+        case GAME_MOVE_LAY_DOWN:
+            if (p->layDownTexture)
+                game_draw_sheet_full_cell(renderer, p->layDownTexture,
+                                          p->frameIndex, p->position);
+            else if (p->damageTexture)
+                game_draw_sheet_full_cell(renderer, p->damageTexture,
+                                          p->frameIndex, p->position);
+            else if (p->idleTexture)
+                game_draw_sheet_full_cell(renderer, p->idleTexture, 0, p->position);
+            break;
+        case GAME_MOVE_DAMAGE:
+            if (p->damageTexture)
+                game_draw_sheet_full_cell(renderer, p->damageTexture,
+                                          p->frameIndex, p->position);
+            else if (p->idleTexture)
+                game_draw_sheet_full_cell(renderer, p->idleTexture, 0, p->position);
+            break;
         case GAME_MOVE_JUMP_BACK:
             if (p->jumpBackTexture)
                 game_draw_sheet_frame_reverse(renderer, p->jumpBackTexture,
@@ -1676,6 +2415,334 @@ static void game_draw_character(SDL_Renderer *renderer, Personnage *p) {
     }
 }
 
+static void game_seed_hazards_random_once(void) {
+    static int seeded = 0;
+    if (!seeded) {
+        srand((unsigned int)time(NULL) ^ (unsigned int)SDL_GetTicks());
+        seeded = 1;
+    }
+}
+
+static double game_rect_center_x(SDL_Rect rect) {
+    return (double)rect.x + (double)rect.w / 2.0;
+}
+
+static double game_rect_center_y(SDL_Rect rect) {
+    return (double)rect.y + (double)rect.h / 2.0;
+}
+
+static double game_collision_circle_radius(SDL_Rect rect, double factor) {
+    double half_w = (double)rect.w / 2.0;
+    double half_h = (double)rect.h / 2.0;
+    return sqrt((half_w * half_w) + (half_h * half_h)) * factor;
+}
+
+static int game_collision_trigonometric(SDL_Rect a, SDL_Rect b) {
+    double dx = game_rect_center_x(a) - game_rect_center_x(b);
+    double dy = game_rect_center_y(a) - game_rect_center_y(b);
+    double radius_sum = game_collision_circle_radius(a, 0.36) +
+                        game_collision_circle_radius(b, 0.42);
+    return (dx * dx + dy * dy) <= (radius_sum * radius_sum);
+}
+
+static int game_character_moving_right(const Personnage *p) {
+    if (!p || p->damageActive) return 0;
+    return p->movementState == GAME_MOVE_WALK ||
+           p->movementState == GAME_MOVE_RUN ||
+           p->movementState == GAME_MOVE_JUMP;
+}
+
+static int game_character_moving_back(const Personnage *p) {
+    if (!p || p->damageActive) return 0;
+    return p->movementState == GAME_MOVE_WALK_BACK ||
+           p->movementState == GAME_MOVE_RUN_BACK ||
+           p->movementState == GAME_MOVE_JUMP_BACK;
+}
+
+static void game_init_obstacle(GameObstacle *obs, SDL_Texture *texture,
+                               int x, int y, int w, int h, int speed) {
+    if (!obs) return;
+
+    game_seed_hazards_random_once();
+    obs->texture = texture;
+    obs->position = (SDL_Rect){x, y, w, h};
+    obs->active = (texture != NULL);
+    obs->collidingPlayer1 = 0;
+    obs->collidingPlayer2 = 0;
+    obs->direction = (rand() % 2 == 0) ? GAME_OBSTACLE_RIGHT : GAME_OBSTACLE_LEFT;
+    obs->minX = 40;
+    obs->maxX = WIDTH - w - 40;
+    if (obs->maxX < obs->minX) obs->maxX = obs->minX;
+    obs->speed = speed;
+    obs->baseY = y;
+    obs->amplitude = 18.0 + (double)(rand() % 28);
+    obs->frequency = 0.012 + ((double)(rand() % 20) / 1000.0);
+    obs->phase = (double)(rand() % 628) / 100.0;
+}
+
+static void game_reset_enemy_obstacles(Game *game) {
+    int ground_line;
+    int tex_w = 0;
+    int tex_h = 0;
+
+    if (!game) return;
+
+    ground_line = game->gameCharacter.groundY + game->gameCharacter.position.h;
+    if (ground_line <= 0) ground_line = GAME_MONO_GROUND_LINE_Y;
+
+    memset(&game->gameEnemy, 0, sizeof(game->gameEnemy));
+    game->gameEnemy.texture = game->gameEnemyTex;
+    game->gameEnemy.active = (game->gameEnemyTex != NULL);
+    game->gameEnemy.nbCols = GAME_ENEMY_SHEET_COLS;
+    game->gameEnemy.nbRows = GAME_ENEMY_SHEET_ROWS;
+    game->gameEnemy.frameWidth = 1;
+    game->gameEnemy.frameHeight = 1;
+    if (game->gameEnemyTex &&
+        SDL_QueryTexture(game->gameEnemyTex, NULL, NULL, &tex_w, &tex_h) == 0 &&
+        tex_w > 0 && tex_h > 0) {
+        game->gameEnemy.frameWidth = tex_w / GAME_ENEMY_SHEET_COLS;
+        game->gameEnemy.frameHeight = tex_h / GAME_ENEMY_SHEET_ROWS;
+        if (game->gameEnemy.frameWidth < 1) game->gameEnemy.frameWidth = tex_w;
+        if (game->gameEnemy.frameHeight < 1) game->gameEnemy.frameHeight = tex_h;
+    }
+    game->gameEnemy.sprite = (SDL_Rect){0, 0, game->gameEnemy.frameWidth,
+                                        game->gameEnemy.frameHeight};
+    game->gameEnemy.position = (SDL_Rect){WIDTH - 360,
+                                          ground_line - GAME_ENEMY_BOX_H,
+                                          GAME_ENEMY_BOX_W,
+                                          GAME_ENEMY_BOX_H};
+    game->gameEnemy.direction = GAME_OBSTACLE_RIGHT;
+    game->gameEnemy.lastFrameTick = SDL_GetTicks();
+
+    game_init_obstacle(&game->gameObstacles[0], game->gameSpiderTex,
+                       330, ground_line - 96, 96, 96, 2);
+    game_init_obstacle(&game->gameObstacles[1], game->gameFallingTex,
+                       800, ground_line - 150, 108, 108, 3);
+    game->gameObstacles[1].amplitude += 18.0;
+}
+
+static void game_update_enemy(Game *game, Uint32 dt, Uint32 now) {
+    GameEnemy *enemy;
+    Personnage *players[2];
+    int player_count;
+    int moving_right = 0;
+    int move_dir = 0;
+    int nearest_player_backing_away = 0;
+    int speed;
+    int step;
+    double enemy_center;
+    double nearest_distance = 1000000.0;
+
+    if (!game) return;
+    enemy = &game->gameEnemy;
+    if (!enemy->active || !enemy->texture) return;
+
+    players[0] = &game->gameCharacter;
+    players[1] = (game->player_mode != 1) ? &game->gameCharacter2 : NULL;
+    player_count = (game->player_mode != 1) ? 2 : 1;
+    enemy_center = game_rect_center_x(enemy->position);
+
+    for (int i = 0; i < player_count; i++) {
+        Personnage *p = players[i];
+        double px;
+        double dist;
+        if (!p) continue;
+        px = game_rect_center_x(p->position);
+        dist = fabs(px - enemy_center);
+        if (dist < nearest_distance) {
+            nearest_distance = dist;
+            nearest_player_backing_away = game_character_moving_back(p);
+        }
+        if (game_character_moving_right(p)) moving_right = 1;
+    }
+
+    if (nearest_distance <= GAME_ENEMY_ALERT_DISTANCE) {
+        move_dir = nearest_player_backing_away ? 0 : 1;
+    } else if (moving_right) {
+        move_dir = 1;
+    }
+
+    if (move_dir != 0) {
+        speed = (nearest_distance <= GAME_ENEMY_ALERT_DISTANCE)
+            ? GAME_ENEMY_FLEE_SPEED
+            : GAME_ENEMY_FOLLOW_SPEED;
+        step = (int)lround((double)speed * ((double)dt / 16.0));
+        if (step < 1) step = 1;
+        enemy->position.x += move_dir * step;
+        enemy->direction = (move_dir > 0) ? GAME_OBSTACLE_RIGHT : GAME_OBSTACLE_LEFT;
+
+        if (now - enemy->lastFrameTick >= 90u) {
+            enemy->frame = (enemy->frame + 1) % enemy->nbCols;
+            enemy->lastFrameTick = now;
+        }
+    }
+
+    enemy->position.x = game_clampi(enemy->position.x, 0, WIDTH - enemy->position.w);
+    enemy->position.y = game->gameCharacter.groundY + game->gameCharacter.position.h - enemy->position.h;
+    if (enemy->position.y < 0) enemy->position.y = 0;
+    enemy->sprite.x = enemy->frame * enemy->frameWidth;
+    enemy->sprite.y = enemy->direction * enemy->frameHeight;
+    if (enemy->sprite.y + enemy->sprite.h > enemy->frameHeight * enemy->nbRows) {
+        enemy->sprite.y = 0;
+    }
+}
+
+static void game_update_obstacle_motion(GameObstacle *obs, Uint32 dt, int ground_line) {
+    int step;
+    int max_y;
+
+    if (!obs || !obs->active) return;
+
+    if (obs->position.x >= obs->maxX) obs->direction = GAME_OBSTACLE_LEFT;
+    if (obs->position.x <= obs->minX) obs->direction = GAME_OBSTACLE_RIGHT;
+
+    step = (int)lround((double)obs->speed * ((double)dt / 16.0));
+    if (step < 1) step = 1;
+    if (obs->direction == GAME_OBSTACLE_RIGHT) obs->position.x += step;
+    else obs->position.x -= step;
+    obs->position.x = game_clampi(obs->position.x, obs->minX, obs->maxX);
+
+    max_y = ground_line - obs->position.h;
+    if (max_y < 0) max_y = 0;
+    obs->position.y = obs->baseY +
+        (int)lround(sin((double)obs->position.x * obs->frequency + obs->phase) *
+                    obs->amplitude);
+    obs->position.y = game_clampi(obs->position.y, 40, max_y);
+}
+
+static void game_update_obstacle_player_collision(Game *game, GameObstacle *obs,
+                                                  Personnage *player,
+                                                  int *colliding_flag,
+                                                  Uint32 now) {
+    int colliding;
+
+    if (!game || !obs || !obs->active || !player || !colliding_flag) return;
+
+    colliding = game_collision_trigonometric(player->position, obs->position);
+    if (colliding) {
+        if (!*colliding_flag && game_trigger_character_damage(player, now) &&
+            game->gameObstacleHitSound) {
+            Mix_PlayChannel(-1, game->gameObstacleHitSound, 0);
+        }
+        *colliding_flag = 1;
+    } else {
+        *colliding_flag = 0;
+    }
+}
+
+static void game_update_world_hazards_motion(Game *game, Uint32 dt, Uint32 now) {
+    int ground_line;
+
+    if (!game) return;
+
+    ground_line = game->gameCharacter.groundY + game->gameCharacter.position.h;
+    if (ground_line <= 0) ground_line = GAME_MONO_GROUND_LINE_Y;
+
+    game_update_enemy(game, dt, now);
+    for (int i = 0; i < GAME_OBSTACLE_COUNT; i++) {
+        GameObstacle *obs = &game->gameObstacles[i];
+        game_update_obstacle_motion(obs, dt, ground_line);
+    }
+}
+
+static void game_update_world_hazards(Game *game, Uint32 dt, Uint32 now) {
+    if (!game) return;
+
+    game_update_world_hazards_motion(game, dt, now);
+    for (int i = 0; i < GAME_OBSTACLE_COUNT; i++) {
+        GameObstacle *obs = &game->gameObstacles[i];
+        game_update_obstacle_player_collision(game, obs, &game->gameCharacter,
+                                              &obs->collidingPlayer1, now);
+        if (game->player_mode != 1) {
+            game_update_obstacle_player_collision(game, obs, &game->gameCharacter2,
+                                                  &obs->collidingPlayer2, now);
+        } else {
+            obs->collidingPlayer2 = 0;
+        }
+    }
+}
+
+static void game_render_world_hazards(Game *game, SDL_Renderer *renderer) {
+    if (!game || !renderer) return;
+
+    for (int i = 0; i < GAME_OBSTACLE_COUNT; i++) {
+        GameObstacle *obs = &game->gameObstacles[i];
+        if (obs->active && obs->texture) {
+            SDL_RenderCopy(renderer, obs->texture, NULL, &obs->position);
+        }
+    }
+
+    if (game->gameEnemy.active && game->gameEnemy.texture) {
+        SDL_RenderCopy(renderer, game->gameEnemy.texture, &game->gameEnemy.sprite,
+                       &game->gameEnemy.position);
+    }
+}
+
+static void game_draw_world_texture_in_panel(SDL_Renderer *renderer,
+                                             SDL_Texture *texture,
+                                             const SDL_Rect *src,
+                                             SDL_Rect world_rect,
+                                             SDL_Rect viewport,
+                                             double scale,
+                                             int panel_ground_line_y,
+                                             int world_ground_line) {
+    SDL_Rect dst;
+    int world_span;
+    int viewport_span;
+    int bottom_offset;
+    double x_scale;
+
+    if (!renderer || !texture) return;
+
+    dst.w = (int)lround((double)world_rect.w * scale);
+    dst.h = (int)lround((double)world_rect.h * scale);
+    if (dst.w < 16) dst.w = 16;
+    if (dst.h < 16) dst.h = 16;
+
+    world_span = WIDTH - world_rect.w;
+    viewport_span = viewport.w - dst.w;
+    if (world_span < 1) world_span = 1;
+    if (viewport_span < 0) viewport_span = 0;
+    x_scale = (double)viewport_span / (double)world_span;
+    dst.x = (int)lround((double)world_rect.x * x_scale);
+
+    bottom_offset = world_ground_line - (world_rect.y + world_rect.h);
+    if (bottom_offset < 0) bottom_offset = 0;
+    dst.y = panel_ground_line_y - dst.h - (int)lround((double)bottom_offset * scale);
+
+    SDL_RenderCopy(renderer, texture, src, &dst);
+}
+
+static void game_render_hazards_in_panel(Game *game, SDL_Renderer *renderer,
+                                         SDL_Rect viewport, double scale,
+                                         int panel_ground_line_y) {
+    int world_ground_line;
+
+    if (!game || !renderer) return;
+
+    world_ground_line = game->gameCharacter.groundY + game->gameCharacter.position.h;
+    if (world_ground_line <= 0) world_ground_line = GAME_MONO_GROUND_LINE_Y;
+
+    for (int i = 0; i < GAME_OBSTACLE_COUNT; i++) {
+        GameObstacle *obs = &game->gameObstacles[i];
+        if (obs->active && obs->texture) {
+            game_draw_world_texture_in_panel(renderer, obs->texture, NULL,
+                                             obs->position, viewport, scale,
+                                             panel_ground_line_y,
+                                             world_ground_line);
+        }
+    }
+
+    if (game->gameEnemy.active && game->gameEnemy.texture) {
+        game_draw_world_texture_in_panel(renderer, game->gameEnemy.texture,
+                                         &game->gameEnemy.sprite,
+                                         game->gameEnemy.position,
+                                         viewport, scale,
+                                         panel_ground_line_y,
+                                         world_ground_line);
+    }
+}
+
 static void duo_reset_runtime(Game *game) {
     if (!game) return;
     game_state_reset_character_at(&game->gameCharacter, WIDTH / 2 - 180, 1);
@@ -1687,34 +2754,48 @@ static void duo_update_runtime(Game *game, Uint32 dt, Uint32 now) {
     const Uint8 *keys = SDL_GetKeyboardState(NULL);
     int walk_step;
     int run_step;
+    int p1_left;
+    int p1_right;
+    int p1_jump;
+    int p1_run;
+    int p2_left;
+    int p2_right;
+    int p2_jump;
+    int p2_run;
 
     if (!game) return;
 
     walk_step = (int)lround((double)game->gameCharacter.moveSpeed * ((double)dt / 16.0));
-    run_step = (int)lround((double)(game->gameCharacter.moveSpeed + 8) * ((double)dt / 16.0));
+    run_step = (int)lround((double)(game->gameCharacter.moveSpeed + GAME_RUN_SPEED_BONUS) * ((double)dt / 16.0));
     if (walk_step < 1) walk_step = 1;
     if (run_step < 1) run_step = 1;
 
+    p1_left = game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_DOWN]);
+    p1_right = game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_WALK]);
+    p1_jump = game->gameCharacter.pendingJump ||
+              game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_JUMP]) ||
+              game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_DANCE]);
+    p1_run = game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_RUN]);
+
+    p2_left = game_key_pressed(keys, game->keyBindings[1][KEY_ACTION_DOWN]);
+    p2_right = game_key_pressed(keys, game->keyBindings[1][KEY_ACTION_WALK]);
+    p2_jump = game->gameCharacter2.pendingJump ||
+              game_key_pressed(keys, game->keyBindings[1][KEY_ACTION_JUMP]) ||
+              game_key_pressed(keys, game->keyBindings[1][KEY_ACTION_DANCE]);
+    p2_run = game_key_pressed(keys, game->keyBindings[1][KEY_ACTION_RUN]);
+
     game_update_character_controls(&game->gameCharacter,
-                                   keys[SDL_SCANCODE_A],
-                                   keys[SDL_SCANCODE_D],
-                                   game->gameCharacter.pendingJump || keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_SPACE],
-                                   keys[SDL_SCANCODE_LSHIFT],
+                                   p1_left,
+                                   p1_right,
+                                   p1_jump,
+                                   p1_run,
                                    walk_step, run_step, dt, now);
     game_update_character_controls(&game->gameCharacter2,
-                                   keys[SDL_SCANCODE_LEFT],
-                                   keys[SDL_SCANCODE_RIGHT],
-                                   game->gameCharacter2.pendingJump || keys[SDL_SCANCODE_UP],
-                                   keys[SDL_SCANCODE_RSHIFT],
+                                   p2_left,
+                                   p2_right,
+                                   p2_jump,
+                                   p2_run,
                                    walk_step, run_step, dt, now);
-}
-
-static const char *duo_player_name(Game *game, int player_index) {
-    const char *name = NULL;
-    if (!game) return "";
-    name = (player_index == 2) ? game->player2_name : game->player1_name;
-    if (!name || strlen(name) == 0) name = (player_index == 2) ? "Player2" : "Player1";
-    return name;
 }
 
 static double duo_panel_scale(SDL_Rect viewport) {
@@ -1727,7 +2808,7 @@ static double duo_panel_scale(SDL_Rect viewport) {
 }
 
 static void duo_render_panel_background(Game *game, SDL_Renderer *renderer, SDL_Rect viewport,
-                                        double scale, int *ground_line_y) {
+                                        double scale, int focus_x, int focus_y, int *ground_line_y) {
     SDL_Rect bg_dst = {0, 0, viewport.w, viewport.h};
     int line_y = viewport.h - (int)lround(70.0 * scale);
     SDL_Rect ground_rect;
@@ -1736,8 +2817,7 @@ static void duo_render_panel_background(Game *game, SDL_Renderer *renderer, SDL_
     if (line_y > viewport.h) line_y = viewport.h;
     ground_rect = (SDL_Rect){0, line_y, viewport.w, viewport.h - line_y};
 
-    if (game->gameBgTex) SDL_RenderCopy(renderer, game->gameBgTex, NULL, &bg_dst);
-    else if (game->background) SDL_RenderCopy(renderer, game->background, NULL, &bg_dst);
+    game_render_background(game, renderer, bg_dst, focus_x, focus_y);
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(renderer, 18, 18, 18, 170);
@@ -1785,27 +2865,36 @@ static void duo_draw_character_in_panel(SDL_Renderer *renderer, Personnage *p,
 }
 
 static void duo_render_player_panel(Game *game, SDL_Renderer *renderer, SDL_Rect viewport,
-                                    Personnage *p, const char *name) {
+                                    Personnage *p, SDL_Texture *life_icon) {
     double scale;
     int ground_line_y = viewport.h;
+    int focus_x;
+    int focus_y;
 
     if (!game || !renderer || !p) return;
 
     scale = duo_panel_scale(viewport);
+    focus_x = p->position.x + p->position.w / 2;
+    focus_y = p->position.y + p->position.h / 2;
     SDL_RenderSetViewport(renderer, &viewport);
-    duo_render_panel_background(game, renderer, viewport, scale, &ground_line_y);
+    duo_render_panel_background(game, renderer, viewport, scale, focus_x, focus_y, &ground_line_y);
+    game_render_hazards_in_panel(game, renderer, viewport, scale, ground_line_y);
     duo_draw_character_in_panel(renderer, p, viewport, scale, ground_line_y);
 
-    if (game->font) {
-        game_draw_text_at(renderer, game->font, name, (SDL_Color){255, 255, 255, 255}, 18, 18);
-        duo_render_time(game, renderer, 18, 58);
+    if (life_icon) {
+        SDL_Rect icon_dst = {18, 10, 60, 60};
+        SDL_RenderCopy(renderer, life_icon, NULL, &icon_dst);
     }
+    if (game->font) duo_render_time(game, renderer, 18, 82);
 
     SDL_RenderSetViewport(renderer, NULL);
 }
 
 static void duo_render_game(Game *game, SDL_Renderer *renderer) {
     int ground_line_y;
+    int focus_x;
+    int focus_y;
+    SDL_Rect scene_rect = {0, 0, WIDTH, HEIGHT};
     SDL_Rect ground_rect;
     if (!game || !renderer) return;
 
@@ -1813,11 +2902,12 @@ static void duo_render_game(Game *game, SDL_Renderer *renderer) {
         SDL_Rect left_view = {0, 0, WIDTH / 2, HEIGHT};
         SDL_Rect right_view = {WIDTH / 2, 0, WIDTH - WIDTH / 2, HEIGHT};
         duo_render_player_panel(game, renderer, left_view, &game->gameCharacter,
-                                duo_player_name(game, 1));
+                                game->startPlayer1LifeTex);
         duo_render_player_panel(game, renderer, right_view, &game->gameCharacter2,
-                                duo_player_name(game, 2));
+                                game->startPlayer2LifeTex);
         SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
         SDL_RenderDrawLine(renderer, WIDTH / 2, 0, WIDTH / 2, HEIGHT);
+        game_render_minimap_overlay(game, renderer, 1, game->player1Tex, NULL);
         return;
     }
 
@@ -1825,19 +2915,23 @@ static void duo_render_game(Game *game, SDL_Renderer *renderer) {
         SDL_Rect top_view = {0, 0, WIDTH, HEIGHT / 2};
         SDL_Rect bottom_view = {0, HEIGHT / 2, WIDTH, HEIGHT - HEIGHT / 2};
         duo_render_player_panel(game, renderer, top_view, &game->gameCharacter,
-                                duo_player_name(game, 1));
+                                game->startPlayer1LifeTex);
         duo_render_player_panel(game, renderer, bottom_view, &game->gameCharacter2,
-                                duo_player_name(game, 2));
+                                game->startPlayer2LifeTex);
         SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
         SDL_RenderDrawLine(renderer, 0, HEIGHT / 2, WIDTH, HEIGHT / 2);
+        game_render_minimap_overlay(game, renderer, 1, game->player1Tex, NULL);
         return;
     }
 
     ground_line_y = game->gameCharacter.groundY + game->gameCharacter.position.h;
     ground_rect = (SDL_Rect){0, ground_line_y, WIDTH, HEIGHT - ground_line_y};
+    focus_x = (game->gameCharacter.position.x + game->gameCharacter.position.w / 2 +
+               game->gameCharacter2.position.x + game->gameCharacter2.position.w / 2) / 2;
+    focus_y = (game->gameCharacter.position.y + game->gameCharacter.position.h / 2 +
+               game->gameCharacter2.position.y + game->gameCharacter2.position.h / 2) / 2;
 
-    if (game->gameBgTex) SDL_RenderCopy(renderer, game->gameBgTex, NULL, NULL);
-    else if (game->background) SDL_RenderCopy(renderer, game->background, NULL, NULL);
+    game_render_background(game, renderer, scene_rect, focus_x, focus_y);
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(renderer, 18, 18, 18, 170);
@@ -1845,9 +2939,11 @@ static void duo_render_game(Game *game, SDL_Renderer *renderer) {
     SDL_SetRenderDrawColor(renderer, 255, 214, 10, 255);
     SDL_RenderDrawLine(renderer, 0, ground_rect.y, WIDTH, ground_rect.y);
 
+    game_render_world_hazards(game, renderer);
     game_draw_character(renderer, &game->gameCharacter);
     game_draw_character(renderer, &game->gameCharacter2);
     duo_render_time(game, renderer, 20, 20);
+    game_render_minimap_overlay(game, renderer, 1, game->player1Tex, NULL);
 }
 
 int Game_Charger(Game *game, SDL_Renderer *renderer) {
@@ -1859,8 +2955,26 @@ int Game_Charger(Game *game, SDL_Renderer *renderer) {
         game->player1Tex = IMG_LoadTexture(renderer, GAME_ASSETS.characters.player1);
     if (!game->player2Tex)
         game->player2Tex = IMG_LoadTexture(renderer, GAME_ASSETS.characters.player2);
+    if (!game->startPlayer1LifeTex)
+        game->startPlayer1LifeTex = IMG_LoadTexture(renderer, "characters/first_player_icon_life.png");
+    if (!game->startPlayer2LifeTex)
+        game->startPlayer2LifeTex = IMG_LoadTexture(renderer, "characters/second_player_icon_life.png");
     if (!game->gameBgTex)
         game->gameBgTex = IMG_LoadTexture(renderer, GAME_ASSETS.backgrounds.main);
+    if (!game->miniMapFrameTex)
+        game->miniMapFrameTex = IMG_LoadTexture(renderer, "backgrounds/cadre_mini_map.png");
+    if (!game->miniMapLockClosedTex)
+        game->miniMapLockClosedTex = IMG_LoadTexture(renderer, "buttons/ferme_lock_1.png");
+    if (!game->miniMapLockOpenTex)
+        game->miniMapLockOpenTex = IMG_LoadTexture(renderer, "buttons/ouvert_lock_2.png");
+    if (!game->gameEnemyTex)
+        game->gameEnemyTex = IMG_LoadTexture(renderer, "enemyobtacle/enemy.png");
+    if (!game->gameSpiderTex)
+        game->gameSpiderTex = IMG_LoadTexture(renderer, "enemyobtacle/spider.png");
+    if (!game->gameFallingTex)
+        game->gameFallingTex = IMG_LoadTexture(renderer, "enemyobtacle/falling.png");
+    if (!game->gameObstacleHitSound)
+        game->gameObstacleHitSound = Mix_LoadWAV("enemyobtacle/sound.wav");
 
     game_destroy_character_textures(&game->gameCharacter);
     game_destroy_character_textures(&game->gameCharacter2);
@@ -1874,10 +2988,19 @@ int Game_Charger(Game *game, SDL_Renderer *renderer) {
         if (use_marvin) game_load_marvin_character(renderer, &game->gameCharacter);
         else game_load_harry_character(renderer, &game->gameCharacter);
         game_state_reset_character(&game->gameCharacter);
+        game_set_character_ground_line(&game->gameCharacter, GAME_MONO_GROUND_LINE_Y);
     }
+    duoStartTime = SDL_GetTicks();
+    game_reset_enemy_obstacles(game);
+    game_minimap_layout_initialized = 0;
+    game_minimap_drag_unlocked = 0;
+    game_minimap_dragging = 0;
+    game_minimap_drag_offset_x = 0;
+    game_minimap_drag_offset_y = 0;
+    game_minimap_ensure_layout();
     game->gameLastTick = SDL_GetTicks();
     game->gameLoaded = 1;
-    printf("[GAME] loaded. Jump keys: SPACE / UP / W\n");
+    printf("[GAME] loaded. Custom key bindings enabled.\n");
     fflush(stdout);
     return 1;
 }
@@ -1890,8 +3013,26 @@ void Game_LectureEntree(Game *game) {
             game->running = 0;
             return;
         }
+        if (game_handle_minimap_mouse_event(&e)) {
+            continue;
+        }
         if (e.type == SDL_KEYDOWN) {
             SDL_Keycode sym = e.key.keysym.sym;
+            SDL_Scancode scan = e.key.keysym.scancode;
+            if (sym == SDLK_z || sym == SDLK_KP_PLUS || sym == SDLK_EQUALS) {
+                game->minimap_zoom += GAME_MINIMAP_ZOOM_STEP;
+                if (game->minimap_zoom > GAME_MINIMAP_ZOOM_MAX) {
+                    game->minimap_zoom = GAME_MINIMAP_ZOOM_MAX;
+                }
+                continue;
+            }
+            if (sym == SDLK_x || sym == SDLK_KP_MINUS || sym == SDLK_MINUS) {
+                game->minimap_zoom -= GAME_MINIMAP_ZOOM_STEP;
+                if (game->minimap_zoom < GAME_MINIMAP_ZOOM_MIN) {
+                    game->minimap_zoom = GAME_MINIMAP_ZOOM_MIN;
+                }
+                continue;
+            }
             if (sym == SDLK_ESCAPE) {
                 Game_ResetRuntime(game);
                 Game_SetSubState(game, STATE_MENU);
@@ -1899,18 +3040,18 @@ void Game_LectureEntree(Game *game) {
                 return;
             }
             if (game->player_mode != 1) {
-                if (e.key.keysym.scancode == SDL_SCANCODE_W ||
-                    e.key.keysym.scancode == SDL_SCANCODE_SPACE) {
+                if (scan == game->keyBindings[0][KEY_ACTION_JUMP] ||
+                    scan == game->keyBindings[0][KEY_ACTION_DANCE]) {
                     game->gameCharacter.pendingJump = 1;
                 }
-                if (e.key.keysym.scancode == SDL_SCANCODE_UP) {
+                if (scan == game->keyBindings[1][KEY_ACTION_JUMP] ||
+                    scan == game->keyBindings[1][KEY_ACTION_DANCE]) {
                     game->gameCharacter2.pendingJump = 1;
                 }
                 continue;
             }
-            if (e.key.keysym.scancode == SDL_SCANCODE_SPACE ||
-                e.key.keysym.scancode == SDL_SCANCODE_UP ||
-                e.key.keysym.scancode == SDL_SCANCODE_W) {
+            if (scan == game->keyBindings[0][KEY_ACTION_JUMP] ||
+                scan == game->keyBindings[0][KEY_ACTION_DANCE]) {
                 game->gameCharacter.pendingJump = 1;
                 printf("[INPUT] jump key pressed: %s\n", SDL_GetKeyName(sym));
                 fflush(stdout);
@@ -1939,78 +3080,46 @@ void Game_MiseAJour(Game *game) {
 
     if (game->player_mode != 1) {
         duo_update_runtime(game, dt, now);
+        game_update_world_hazards(game, dt, now);
         SDL_Delay(16);
         return;
     }
 
     keys = SDL_GetKeyboardState(NULL);
     walk_step = (int)lround((double)game->gameCharacter.moveSpeed * ((double)dt / 16.0));
-    run_step = (int)lround((double)(game->gameCharacter.moveSpeed + 8) * ((double)dt / 16.0));
+    run_step = (int)lround((double)(game->gameCharacter.moveSpeed + GAME_RUN_SPEED_BONUS) * ((double)dt / 16.0));
     if (walk_step < 1) walk_step = 1;
     if (run_step < 1) run_step = 1;
 
-    left_pressed = (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A]);
-    right_pressed = (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D]);
+    left_pressed = game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_DOWN]);
+    right_pressed = game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_WALK]);
     jump_pressed = game->gameCharacter.pendingJump ||
-                   keys[SDL_SCANCODE_SPACE] ||
-                   keys[SDL_SCANCODE_UP] ||
-                   keys[SDL_SCANCODE_W];
-    run_modifier = (keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT]);
+                   game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_JUMP]) ||
+                   game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_DANCE]);
+    run_modifier = game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_RUN]);
 
-    if (jump_pressed && !game->gameCharacter.up) {
-        if (left_pressed && !right_pressed) game_move_jump_back(&game->gameCharacter, now);
-        else if (right_pressed && !left_pressed) game_move_jump(&game->gameCharacter, now);
-        else game_move_jump_up(&game->gameCharacter, now);
-    }
     game_jump_latch = jump_pressed;
-    game->gameCharacter.pendingJump = 0;
-
-    if (game->gameCharacter.up) {
-        if (game->gameCharacter.facing < 0)
-            game_set_movement(&game->gameCharacter, GAME_MOVE_JUMP_BACK, now);
-        else
-            game_set_movement(&game->gameCharacter, GAME_MOVE_JUMP, now);
-        game_update_jump(&game->gameCharacter, dt, now);
-    } else {
-        game->gameCharacter.moving = 0;
-        if (left_pressed && !right_pressed) {
-            if (run_modifier) game_move_run_back(&game->gameCharacter, run_step, now);
-            else game_move_walk_back(&game->gameCharacter, walk_step, now);
-        } else if (right_pressed && !left_pressed) {
-            if (run_modifier) game_move_run(&game->gameCharacter, run_step, now);
-            else game_move_walk(&game->gameCharacter, walk_step, now);
-        } else {
-            game_move_stop(&game->gameCharacter, now);
-        }
-    }
-
-    if (game->gameCharacter.position.x < 0)
-        game->gameCharacter.position.x = 0;
-    if (game->gameCharacter.position.x + game->gameCharacter.position.w > WIDTH)
-        game->gameCharacter.position.x = WIDTH - game->gameCharacter.position.w;
-    if (game->gameCharacter.position.y < 0)
-        game->gameCharacter.position.y = 0;
-    if (game->gameCharacter.position.y > game->gameCharacter.groundY)
-        game->gameCharacter.position.y = game->gameCharacter.groundY;
-
-    game_move_animation(&game->gameCharacter, now);
+    game_update_character_controls(&game->gameCharacter,
+                                   left_pressed,
+                                   right_pressed,
+                                   jump_pressed,
+                                   run_modifier,
+                                   walk_step, run_step, dt, now);
+    game_update_world_hazards(game, dt, now);
 
     SDL_Delay(16);
 }
 
 void Game_Affichage(Game *game, SDL_Renderer *renderer) {
     int ground_line_y;
+    int focus_x;
+    int focus_y;
+    SDL_Rect scene_rect = {0, 0, WIDTH, HEIGHT};
     SDL_Rect ground_rect;
-    SDL_Rect hint_rect = {(WIDTH - 620) / 2, 88, 620, 42};
-    SDL_Rect left_card = {80, 140, 420, 500};
-    SDL_Rect right_card = {WIDTH - 500, 140, 420, 500};
-    SDL_Rect solo_card = {(WIDTH - 420) / 2, 140, 420, 500};
-    SDL_Color white = {255, 255, 255, 255};
-    SDL_Color soft = {220, 220, 220, 255};
     int is_duo;
     int solo_second;
     SDL_Texture *solo_tex;
-    const char *solo_name;
+    SDL_Texture *solo_life_tex;
 
     if (!game || !renderer) return;
     is_duo = (game->player_mode != 1);
@@ -2021,18 +3130,12 @@ void Game_Affichage(Game *game, SDL_Renderer *renderer) {
 
     solo_second = (!is_duo && game->solo_selected_player == 1);
     solo_tex = (solo_second && game->player2Tex) ? game->player2Tex : game->player1Tex;
-    solo_name = solo_second ? game->player2_name : game->player1_name;
-    if (!solo_name || strlen(solo_name) == 0) {
-        solo_name = solo_second ? "Player2" : "Player1";
-    }
 
     ground_line_y = game->gameCharacter.groundY + game->gameCharacter.position.h;
     ground_rect = (SDL_Rect){0, ground_line_y, WIDTH, HEIGHT - ground_line_y};
-
-    if (game->gameBgTex)
-        SDL_RenderCopy(renderer, game->gameBgTex, NULL, NULL);
-    else if (game->background)
-        SDL_RenderCopy(renderer, game->background, NULL, NULL);
+    focus_x = game->gameCharacter.position.x + game->gameCharacter.position.w / 2;
+    focus_y = game->gameCharacter.position.y + game->gameCharacter.position.h / 2;
+    game_render_background(game, renderer, scene_rect, focus_x, focus_y);
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(renderer, 18, 18, 18, 170);
@@ -2040,7 +3143,24 @@ void Game_Affichage(Game *game, SDL_Renderer *renderer) {
     SDL_SetRenderDrawColor(renderer, 255, 214, 10, 255);
     SDL_RenderDrawLine(renderer, 0, ground_rect.y, WIDTH, ground_rect.y);
 
+    game_render_world_hazards(game, renderer);
     switch ((GameMovement)game->gameCharacter.movementState) {
+        case GAME_MOVE_LAY_DOWN:
+            if (game->gameCharacter.layDownTexture)
+                game_draw_sheet_full_cell(renderer, game->gameCharacter.layDownTexture,
+                                          game->gameCharacter.frameIndex,
+                                          game->gameCharacter.position);
+            else if (game->gameCharacter.damageTexture)
+                game_draw_sheet_full_cell(renderer, game->gameCharacter.damageTexture,
+                                          game->gameCharacter.frameIndex,
+                                          game->gameCharacter.position);
+            break;
+        case GAME_MOVE_DAMAGE:
+            if (game->gameCharacter.damageTexture)
+                game_draw_sheet_full_cell(renderer, game->gameCharacter.damageTexture,
+                                          game->gameCharacter.frameIndex,
+                                          game->gameCharacter.position);
+            break;
         case GAME_MOVE_JUMP_BACK:
             if (game->gameCharacter.jumpBackTexture)
                 game_draw_sheet_frame_reverse(renderer, game->gameCharacter.jumpBackTexture,
@@ -2109,50 +3229,16 @@ void Game_Affichage(Game *game, SDL_Renderer *renderer) {
             break;
     }
 
-    SDL_SetRenderDrawColor(renderer, 10, 10, 10, 140);
-    if (is_duo) {
-        SDL_RenderFillRect(renderer, &left_card);
-        SDL_RenderFillRect(renderer, &right_card);
-    } else {
-        SDL_RenderFillRect(renderer, &solo_card);
+    solo_life_tex = (solo_second && game->startPlayer2LifeTex)
+        ? game->startPlayer2LifeTex
+        : game->startPlayer1LifeTex;
+    if (solo_life_tex) {
+        SDL_Rect icon_dst = {18, 10, 60, 60};
+        SDL_RenderCopy(renderer, solo_life_tex, NULL, &icon_dst);
     }
-    SDL_SetRenderDrawColor(renderer, 230, 230, 230, 255);
-    if (is_duo) {
-        SDL_RenderDrawRect(renderer, &left_card);
-        SDL_RenderDrawRect(renderer, &right_card);
-    } else {
-        SDL_RenderDrawRect(renderer, &solo_card);
-    }
+    if (game->font) duo_render_time(game, renderer, 18, 82);
 
-    if (is_duo) {
-        if (game->player1Tex) {
-            SDL_Rect p1 = {left_card.x + 20, left_card.y + 20, left_card.w - 40, left_card.h - 90};
-            SDL_RenderCopy(renderer, game->player1Tex, NULL, &p1);
-        }
-        if (game->player2Tex) {
-            SDL_Rect p2 = {right_card.x + 20, right_card.y + 20, right_card.w - 40, right_card.h - 90};
-            SDL_RenderCopy(renderer, game->player2Tex, NULL, &p2);
-        }
-    } else if (solo_tex) {
-        SDL_Rect solo_player = {solo_card.x + 20, solo_card.y + 20, solo_card.w - 40, solo_card.h - 90};
-        SDL_RenderCopy(renderer, solo_tex, NULL, &solo_player);
-    }
-
-    if (game->font) {
-        if (is_duo) {
-            game_draw_center_text(renderer, game->font, game->player1_name, white,
-                                  (SDL_Rect){left_card.x, left_card.y + left_card.h - 58, left_card.w, 40});
-            game_draw_center_text(renderer, game->font, game->player2_name, white,
-                                  (SDL_Rect){right_card.x, right_card.y + right_card.h - 58, right_card.w, 40});
-        } else {
-            game_draw_center_text(renderer, game->font, solo_name, white,
-                                  (SDL_Rect){solo_card.x, solo_card.y + solo_card.h - 58, solo_card.w, 40});
-        }
-        game_draw_center_text(renderer, game->font, "GAME STATE", white,
-                              (SDL_Rect){(WIDTH - 300) / 2, 40, 300, 50});
-        game_draw_center_text(renderer, game->font,
-                              "LEFT/RIGHT walk | SHIFT run | SPACE jump", soft, hint_rect);
-    }
+    game_render_minimap_overlay(game, renderer, 0, solo_tex, NULL);
 }
 
 static SDL_Rect quizBtnARect = {120, 430, 150, 120};

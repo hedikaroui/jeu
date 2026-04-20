@@ -58,6 +58,9 @@ void Game_ResetRuntime(Game *game) {
     game->gameCharacter.pendingJump = 0;
     game->gameCharacter.frameIndex = 0;
     game->gameCharacter.lastFrameTick = 0;
+    game->gameCharacter.damageActive = 0;
+    game->gameCharacter.damageStartTick = 0;
+    game->gameCharacter.damageInvulnUntil = 0;
 
     game->gameCharacter2.up = 0;
     game->gameCharacter2.jumpPhase = 0;
@@ -74,6 +77,16 @@ void Game_ResetRuntime(Game *game) {
     game->gameCharacter2.pendingJump = 0;
     game->gameCharacter2.frameIndex = 0;
     game->gameCharacter2.lastFrameTick = 0;
+    game->gameCharacter2.damageActive = 0;
+    game->gameCharacter2.damageStartTick = 0;
+    game->gameCharacter2.damageInvulnUntil = 0;
+
+    game->gameEnemy.active = 0;
+    for (int i = 0; i < GAME_OBSTACLE_COUNT; i++) {
+        game->gameObstacles[i].active = 0;
+        game->gameObstacles[i].collidingPlayer1 = 0;
+        game->gameObstacles[i].collidingPlayer2 = 0;
+    }
 }
 
 int Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer) {
@@ -126,6 +139,9 @@ int Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer) {
     game->player1Tex = NULL;
     game->player2Tex = NULL;
     game->gameBgTex = NULL;
+    game->miniMapFrameTex = NULL;
+    game->miniMapLockClosedTex = NULL;
+    game->miniMapLockOpenTex = NULL;
     game->psJ1Tex = NULL;
     game->psJ2Tex = NULL;
     game->psKeyboardTex = NULL;
@@ -147,6 +163,18 @@ int Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer) {
     game->player_mode = 2;
     game->solo_selected_player = 0;
     game->duo_display_mode = 0;
+    game->duo_background_mode = 0;
+    game->minimap_zoom = 1.0f;
+    game->keyBindings[0][KEY_ACTION_WALK] = SDL_SCANCODE_D;
+    game->keyBindings[0][KEY_ACTION_JUMP] = SDL_SCANCODE_W;
+    game->keyBindings[0][KEY_ACTION_RUN] = SDL_SCANCODE_LSHIFT;
+    game->keyBindings[0][KEY_ACTION_DOWN] = SDL_SCANCODE_A;
+    game->keyBindings[0][KEY_ACTION_DANCE] = SDL_SCANCODE_SPACE;
+    game->keyBindings[1][KEY_ACTION_WALK] = SDL_SCANCODE_RIGHT;
+    game->keyBindings[1][KEY_ACTION_JUMP] = SDL_SCANCODE_UP;
+    game->keyBindings[1][KEY_ACTION_RUN] = SDL_SCANCODE_RSHIFT;
+    game->keyBindings[1][KEY_ACTION_DOWN] = SDL_SCANCODE_LEFT;
+    game->keyBindings[1][KEY_ACTION_DANCE] = SDL_SCANCODE_RETURN;
     memset(&game->ps_bg, 0, sizeof(game->ps_bg));
 
     game->msGreTex = IMG_LoadTexture(*renderer, SCORE_BACK_HOVER);
@@ -246,6 +274,9 @@ void Liberation(Game *game, SDL_Window *window, SDL_Renderer *renderer) {
     if (game->player1Tex) SDL_DestroyTexture(game->player1Tex);
     if (game->player2Tex) SDL_DestroyTexture(game->player2Tex);
     if (game->gameBgTex) SDL_DestroyTexture(game->gameBgTex);
+    if (game->miniMapFrameTex) SDL_DestroyTexture(game->miniMapFrameTex);
+    if (game->miniMapLockClosedTex) SDL_DestroyTexture(game->miniMapLockClosedTex);
+    if (game->miniMapLockOpenTex) SDL_DestroyTexture(game->miniMapLockOpenTex);
     if (game->psJ1Tex) SDL_DestroyTexture(game->psJ1Tex);
     if (game->psJ2Tex) SDL_DestroyTexture(game->psJ2Tex);
     if (game->psKeyboardTex) SDL_DestroyTexture(game->psKeyboardTex);
@@ -308,6 +339,8 @@ void Liberation(Game *game, SDL_Window *window, SDL_Renderer *renderer) {
     if (game->gameCharacter.runBackTexture) SDL_DestroyTexture(game->gameCharacter.runBackTexture);
     if (game->gameCharacter.jumpTexture) SDL_DestroyTexture(game->gameCharacter.jumpTexture);
     if (game->gameCharacter.jumpBackTexture) SDL_DestroyTexture(game->gameCharacter.jumpBackTexture);
+    if (game->gameCharacter.damageTexture) SDL_DestroyTexture(game->gameCharacter.damageTexture);
+    if (game->gameCharacter.layDownTexture) SDL_DestroyTexture(game->gameCharacter.layDownTexture);
     if (game->gameCharacter2.idleTexture) SDL_DestroyTexture(game->gameCharacter2.idleTexture);
     if (game->gameCharacter2.idleBackTexture) SDL_DestroyTexture(game->gameCharacter2.idleBackTexture);
     if (game->gameCharacter2.walkTexture) SDL_DestroyTexture(game->gameCharacter2.walkTexture);
@@ -316,6 +349,12 @@ void Liberation(Game *game, SDL_Window *window, SDL_Renderer *renderer) {
     if (game->gameCharacter2.runBackTexture) SDL_DestroyTexture(game->gameCharacter2.runBackTexture);
     if (game->gameCharacter2.jumpTexture) SDL_DestroyTexture(game->gameCharacter2.jumpTexture);
     if (game->gameCharacter2.jumpBackTexture) SDL_DestroyTexture(game->gameCharacter2.jumpBackTexture);
+    if (game->gameCharacter2.damageTexture) SDL_DestroyTexture(game->gameCharacter2.damageTexture);
+    if (game->gameCharacter2.layDownTexture) SDL_DestroyTexture(game->gameCharacter2.layDownTexture);
+    if (game->gameEnemyTex) SDL_DestroyTexture(game->gameEnemyTex);
+    if (game->gameSpiderTex) SDL_DestroyTexture(game->gameSpiderTex);
+    if (game->gameFallingTex) SDL_DestroyTexture(game->gameFallingTex);
+    if (game->gameObstacleHitSound) Mix_FreeChunk(game->gameObstacleHitSound);
 
     StartPlay_Cleanup();
 
@@ -377,7 +416,9 @@ void GameLoop_ModuleInitialisationEtat(Game *game, SDL_Renderer *renderer) {
     }
 }
 
-void GameLoop_ModuleInput(Game *game) {
+void GameLoop_ModuleInput(Game *game, SDL_Renderer *renderer) {
+    GameLoop_ModuleInitialisationEtat(game, renderer);
+
     switch (game->currentSubState) {
         case STATE_MENU:
             Menu_LectureEntree(game);
@@ -471,7 +512,10 @@ void GameLoop_ModuleUpdate(Game *game) {
         case STATE_HISTOIRE:
         case STATE_SCORES_INPUT:
         case STATE_SCORES_LIST:
+            break;
         case STATE_QUIT:
+            game->running = 0;
+            break;
         default:
             break;
     }

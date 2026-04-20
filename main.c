@@ -12,14 +12,9 @@ int main(void) {
     }
 
     while (game.running) {
-        GameLoop_ModuleInitialisationEtat(&game, renderer); // a deplacer 
-        GameLoop_ModuleInput(&game);
+        GameLoop_ModuleInput(&game, renderer);
         GameLoop_ModuleUpdate(&game);
         GameLoop_ModuleAffichage(&game, renderer);
-
-        if (game.currentSubState == STATE_QUIT) {
-            game.running = 0;
-        }
     }
 
     Liberation(&game, window, renderer);
