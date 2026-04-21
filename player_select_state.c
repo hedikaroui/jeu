@@ -3,73 +3,73 @@
 #include <stdio.h>
 #include <string.h>
 
-static SDL_Rect ps_p1_frame, ps_p2_frame;
-static SDL_Rect ps_j1_btn, ps_j2_btn;
-static SDL_Rect ps_input1, ps_input2;
-static SDL_Rect ps_controls[2][3]; /* [player][0 keyboard, 1 controller, 2 mouse] */
-static SDL_Rect ps_score_btn;
-static SDL_Rect ps_mode_mono_btn, ps_mode_multi_btn;
-static SDL_Rect ps_player1_photo_rect;
-static SDL_Rect ps_help_top_right_rect;
-static int ps_focus_field = 0;   /* 0 none, 1 input1, 2 input2 */
-static int ps_cursor_on = 1;
-static Uint32 ps_cursor_timer = 0;
-static int ps_hover_j1 = 0, ps_hover_j2 = 0;
-static int ps_last_hover_j1 = 0, ps_last_hover_j2 = 0;
-static int ps_hover_controls[2][3] = {{0, 0, 0}, {0, 0, 0}};
-static int ps_last_hover_controls[2][3] = {{0, 0, 0}, {0, 0, 0}};
-static int ps_selected_controls[2] = {-1, -1};
-static int ps_hover_score = 0;
-static int ps_last_hover_score = 0;
-static int ps_hover_mode_mono = 0, ps_hover_mode_multi = 0;
-static int ps_last_hover_mode_mono = 0, ps_last_hover_mode_multi = 0;
-static char ps_name1[256];
-static char ps_name2[256];
-static int ps_cursor1 = 0, ps_cursor2 = 0;
-static Uint32 ps_control_warn_until = 0;
-static int ps_mouse_conflict_warn = 0;
-static SDL_Texture *ps_dance_tex = NULL;
-static SDL_Texture *ps_settings_p1_tex = NULL;
-static SDL_Texture *ps_settings_p2_tex = NULL;
-static SDL_Texture *ps_not_ready_tex = NULL;
-static SDL_Texture *ps_ready_tex = NULL;
-static SDL_Texture *ps_arrow_right_tex = NULL;
-static SDL_Texture *ps_movement_settings_tex = NULL;
-static SDL_Texture *ps_send_button_tex = NULL;
-static SDL_Texture *ps_cancel_button_tex = NULL;
-static int ps_show_movement_settings = 0;
-static int ps_movement_settings_target_player = 0;
-static int ps_movement_settings_active_action = -1;
-static SDL_Scancode ps_movement_settings_keys[KEY_ACTION_COUNT];
-static SDL_Rect ps_movement_settings_key_rects[KEY_ACTION_COUNT];
-static SDL_Rect ps_movement_settings_send_rect;
-static SDL_Rect ps_movement_settings_cancel_rect;
-static SDL_Rect ps_movement_settings_close_rect;
-static int ps_movement_settings_hover_send = 0;
-static int ps_movement_settings_hover_cancel = 0;
-static int ps_movement_settings_hover_close = 0;
-static int ps_dance_rows = 5, ps_dance_cols = 5;
-static int ps_dance_frame_w = 0, ps_dance_frame_h = 0;
-static int ps_dance_frame = 0;
-static Uint32 ps_dance_last_tick = 0;
-static int ps_hover_player1_photo = 0;
-static SDL_Rect ps_settings_rect;
-static SDL_Rect ps_not_ready_rect;
-static SDL_Rect ps_mono_arrow_rect;
-static int ps_hover_not_ready = 0;
-static int ps_mono_character_index = 0; /* 0 -> first player, 1 -> second player */
+SDL_Rect ps_p1_frame, ps_p2_frame;
+SDL_Rect ps_j1_btn, ps_j2_btn;
+SDL_Rect ps_input1, ps_input2;
+SDL_Rect ps_controls[2][3]; /* [player][0 keyboard, 1 controller, 2 mouse] */
+SDL_Rect ps_score_btn;
+SDL_Rect ps_mode_mono_btn, ps_mode_multi_btn;
+SDL_Rect ps_player1_photo_rect;
+SDL_Rect ps_help_top_right_rect;
+int ps_focus_field = 0;   /* 0 none, 1 input1, 2 input2 */
+int ps_cursor_on = 1;
+Uint32 ps_cursor_timer = 0;
+int ps_hover_j1 = 0, ps_hover_j2 = 0;
+int ps_last_hover_j1 = 0, ps_last_hover_j2 = 0;
+int ps_hover_controls[2][3] = {{0, 0, 0}, {0, 0, 0}};
+int ps_last_hover_controls[2][3] = {{0, 0, 0}, {0, 0, 0}};
+int ps_selected_controls[2] = {-1, -1};
+int ps_hover_score = 0;
+int ps_last_hover_score = 0;
+int ps_hover_mode_mono = 0, ps_hover_mode_multi = 0;
+int ps_last_hover_mode_mono = 0, ps_last_hover_mode_multi = 0;
+char ps_name1[256];
+char ps_name2[256];
+int ps_cursor1 = 0, ps_cursor2 = 0;
+Uint32 ps_control_warn_until = 0;
+int ps_mouse_conflict_warn = 0;
+SDL_Texture *ps_dance_tex = NULL;
+SDL_Texture *ps_settings_p1_tex = NULL;
+SDL_Texture *ps_settings_p2_tex = NULL;
+SDL_Texture *ps_not_ready_tex = NULL;
+SDL_Texture *ps_ready_tex = NULL;
+SDL_Texture *ps_arrow_right_tex = NULL;
+SDL_Texture *ps_movement_settings_tex = NULL;
+SDL_Texture *ps_send_button_tex = NULL;
+SDL_Texture *ps_cancel_button_tex = NULL;
+int ps_show_movement_settings = 0;
+int ps_movement_settings_target_player = 0;
+int ps_movement_settings_active_action = -1;
+SDL_Scancode ps_movement_settings_keys[KEY_ACTION_COUNT];
+SDL_Rect ps_movement_settings_key_rects[KEY_ACTION_COUNT];
+SDL_Rect ps_movement_settings_send_rect;
+SDL_Rect ps_movement_settings_cancel_rect;
+SDL_Rect ps_movement_settings_close_rect;
+int ps_movement_settings_hover_send = 0;
+int ps_movement_settings_hover_cancel = 0;
+int ps_movement_settings_hover_close = 0;
+int ps_dance_rows = 5, ps_dance_cols = 5;
+int ps_dance_frame_w = 0, ps_dance_frame_h = 0;
+int ps_dance_frame = 0;
+Uint32 ps_dance_last_tick = 0;
+int ps_hover_player1_photo = 0;
+SDL_Rect ps_settings_rect;
+SDL_Rect ps_not_ready_rect;
+SDL_Rect ps_mono_arrow_rect;
+int ps_hover_not_ready = 0;
+int ps_mono_character_index = 0; /* 0 -> first player, 1 -> second player */
 
-static int ps_point_in_rect(SDL_Rect r, int x, int y) {
+int ps_point_in_rect(SDL_Rect r, int x, int y) {
     return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
 
-static SDL_Rect ps_control_help_icon_rect(int player, int control, int active) {
+SDL_Rect ps_control_help_icon_rect(int player, int control, int active) {
     SDL_Rect r = ps_controls[player][control];
     if (active) r.y -= 4;
     return (SDL_Rect){r.x + r.w - 24, r.y + 4, 20, 20};
 }
 
-static int ps_keyboard_help_icon_hit(int player_count, int x, int y, int *player_out) {
+int ps_keyboard_help_icon_hit(int player_count, int x, int y, int *player_out) {
     for (int p = 0; p < player_count; p++) {
         SDL_Rect normal = ps_control_help_icon_rect(p, 0, 0);
         SDL_Rect shifted = ps_control_help_icon_rect(p, 0, 1);
@@ -82,7 +82,7 @@ static int ps_keyboard_help_icon_hit(int player_count, int x, int y, int *player
     return 0;
 }
 
-static SDL_Texture *load_texture_first(SDL_Renderer *renderer, const char *a, const char *b, const char *c) {
+SDL_Texture *ps_load_texture_first(SDL_Renderer *renderer, const char *a, const char *b, const char *c) {
     SDL_Texture *t = NULL;
     if (a) t = IMG_LoadTexture(renderer, a);
     if (!t && b) t = IMG_LoadTexture(renderer, b);
@@ -90,7 +90,7 @@ static SDL_Texture *load_texture_first(SDL_Renderer *renderer, const char *a, co
     return t;
 }
 
-static void ps_draw_texture_in_rect(SDL_Renderer *renderer, SDL_Texture *tex, SDL_Rect dst_rect) {
+void ps_draw_texture_in_rect(SDL_Renderer *renderer, SDL_Texture *tex, SDL_Rect dst_rect) {
     if (!renderer || !tex || dst_rect.w <= 0 || dst_rect.h <= 0) return;
     int tw = 0, th = 0;
     if (SDL_QueryTexture(tex, NULL, NULL, &tw, &th) != 0 || tw <= 0 || th <= 0) {
@@ -111,7 +111,7 @@ static void ps_draw_texture_in_rect(SDL_Renderer *renderer, SDL_Texture *tex, SD
     SDL_RenderCopy(renderer, tex, NULL, &draw);
 }
 
-static SDL_Rect ps_fit_texture_rect(SDL_Texture *tex, SDL_Rect dst_rect) {
+SDL_Rect ps_fit_texture_rect(SDL_Texture *tex, SDL_Rect dst_rect) {
     SDL_Rect draw = dst_rect;
     int tw = 0;
     int th = 0;
@@ -131,7 +131,7 @@ static SDL_Rect ps_fit_texture_rect(SDL_Texture *tex, SDL_Rect dst_rect) {
     return draw;
 }
 
-static SDL_Scancode ps_default_binding_for(int player_index, int action) {
+SDL_Scancode ps_default_binding_for(int player_index, int action) {
     if (player_index == 0) {
         switch (action) {
             case KEY_ACTION_WALK: return SDL_SCANCODE_D;
@@ -152,14 +152,14 @@ static SDL_Scancode ps_default_binding_for(int player_index, int action) {
     }
 }
 
-static void ps_reset_movement_settings_labels(void) {
+void ps_reset_movement_settings_labels(void) {
     for (int i = 0; i < KEY_ACTION_COUNT; i++) {
         ps_movement_settings_keys[i] = ps_default_binding_for(ps_movement_settings_target_player, i);
     }
     ps_movement_settings_active_action = -1;
 }
 
-static void ps_open_movement_settings(Game *game, int player_index) {
+void ps_open_movement_settings(Game *game, int player_index) {
     if (!game) return;
     if (player_index < 0) player_index = 0;
     if (player_index > 1) player_index = 1;
@@ -173,14 +173,14 @@ static void ps_open_movement_settings(Game *game, int player_index) {
     ps_show_movement_settings = 1;
 }
 
-static void ps_apply_movement_settings(Game *game) {
+void ps_apply_movement_settings(Game *game) {
     if (!game) return;
     for (int i = 0; i < KEY_ACTION_COUNT; i++) {
         game->keyBindings[ps_movement_settings_target_player][i] = ps_movement_settings_keys[i];
     }
 }
 
-static const char *ps_key_label(SDL_Scancode sc) {
+const char *ps_key_label(SDL_Scancode sc) {
     const char *name;
     if (sc == SDL_SCANCODE_UNKNOWN) return "...";
     name = SDL_GetScancodeName(sc);
@@ -188,7 +188,7 @@ static const char *ps_key_label(SDL_Scancode sc) {
     return name;
 }
 
-static void ps_layout_movement_settings_widgets(SDL_Rect panel_draw_rect) {
+void ps_layout_movement_settings_widgets(SDL_Rect panel_draw_rect) {
     int key_x = panel_draw_rect.x + (int)(panel_draw_rect.w * 0.60);
     int key_w = (int)(panel_draw_rect.w * 0.24);
     int row_h = (int)(panel_draw_rect.h * 0.055);
@@ -223,7 +223,7 @@ static void ps_layout_movement_settings_widgets(SDL_Rect panel_draw_rect) {
     };
 }
 
-static void ps_draw_text(SDL_Renderer *renderer, TTF_Font *font, const char *text,
+void ps_draw_text(SDL_Renderer *renderer, TTF_Font *font, const char *text,
                          SDL_Color color, int x, int y) {
     if (!font || !text || !*text) return;
     SDL_Surface *surf = TTF_RenderUTF8_Blended(font, text, color);
@@ -237,7 +237,7 @@ static void ps_draw_text(SDL_Renderer *renderer, TTF_Font *font, const char *tex
     SDL_FreeSurface(surf);
 }
 
-static void ps_draw_center_text(SDL_Renderer *renderer, TTF_Font *font, const char *text,
+void ps_draw_center_text(SDL_Renderer *renderer, TTF_Font *font, const char *text,
                                 SDL_Color color, SDL_Rect box) {
     if (!font || !text || !*text) return;
     SDL_Surface *surf = TTF_RenderUTF8_Blended(font, text, color);
@@ -256,7 +256,7 @@ static void ps_draw_center_text(SDL_Renderer *renderer, TTF_Font *font, const ch
     SDL_FreeSurface(surf);
 }
 
-static void ps_draw_filled_circle(SDL_Renderer *renderer, int cx, int cy, int radius,
+void ps_draw_filled_circle(SDL_Renderer *renderer, int cx, int cy, int radius,
                                   Uint8 r, Uint8 g, Uint8 b, Uint8 a) {
     if (!renderer || radius <= 0) return;
     SDL_SetRenderDrawColor(renderer, r, g, b, a);
@@ -266,7 +266,7 @@ static void ps_draw_filled_circle(SDL_Renderer *renderer, int cx, int cy, int ra
     }
 }
 
-static void ps_handle_text_input(char *buf, int *cursor_pos, SDL_Keycode key) {
+void ps_handle_text_input(char *buf, int *cursor_pos, SDL_Keycode key) {
     int len = (int)strlen(buf);
     if (key == SDLK_BACKSPACE && *cursor_pos > 0) {
         memmove(buf + *cursor_pos - 1, buf + *cursor_pos, len - *cursor_pos + 1);
@@ -284,11 +284,11 @@ static void ps_handle_text_input(char *buf, int *cursor_pos, SDL_Keycode key) {
     }
 }
 
-static int ps_player_count(const Game *game) {
+int ps_player_count(const Game *game) {
     return (game && game->player_mode == 1) ? 1 : 2;
 }
 
-static void ps_layout_controls_for_input(int player, SDL_Rect input) {
+void ps_layout_controls_for_input(int player, SDL_Rect input) {
     int iconW = 96;
     int iconH = 74;
     int gap = 12;
@@ -301,7 +301,7 @@ static void ps_layout_controls_for_input(int player, SDL_Rect input) {
     ps_controls[player][2] = (SDL_Rect){startX + (iconW + gap) * 2, y, iconW, iconH};
 }
 
-static void ps_layout_player_config(const Game *game) {
+void ps_layout_player_config(const Game *game) {
     if (ps_player_count(game) == 1) {
         int panel_margin = 45;
         int right_panel_w = 500;
@@ -343,7 +343,7 @@ static void ps_layout_player_config(const Game *game) {
     ps_player1_photo_rect = (SDL_Rect){ps_p1_frame.x + 18, ps_p1_frame.y + 40, ps_p1_frame.w - 36, ps_p1_frame.h - 12};
 }
 
-static void ps_clear_config_hover(void) {
+void ps_clear_config_hover(void) {
     ps_hover_player1_photo = 0;
     ps_hover_not_ready = 0;
     ps_hover_score = 0;
@@ -356,7 +356,7 @@ static void ps_clear_config_hover(void) {
     }
 }
 
-static void ps_commit_selection(Game *game, int player_count) {
+void ps_commit_selection(Game *game, int player_count) {
     if (!game) return;
 
     game->startPlayLoaded = 0;
@@ -395,7 +395,7 @@ static void ps_commit_selection(Game *game, int player_count) {
     }
 }
 
-static void ps_enter_player_config(Game *game, int player_mode) {
+void ps_enter_player_config(Game *game, int player_mode) {
     game->player_mode = player_mode;
     ps_layout_player_config(game);
     ps_clear_config_hover();
@@ -455,15 +455,15 @@ int PlayerSelect_Charger(Game *game, SDL_Renderer *renderer) {
     if (!game->psJ2Tex)
         game->psJ2Tex = IMG_LoadTexture(renderer, SCORE_BUTTON_HOVER);
     if (!game->psKeyboardTex)
-        game->psKeyboardTex = load_texture_first(renderer, "buttons/keyboard.png", CHAR_KEYBOARD_NORMAL_1, CHAR_KEYBOARD_NORMAL_3);
+        game->psKeyboardTex = ps_load_texture_first(renderer, "buttons/keyboard.png", CHAR_KEYBOARD_NORMAL_1, CHAR_KEYBOARD_NORMAL_3);
     if (!game->psKeyboardHoverTex)
         game->psKeyboardHoverTex = IMG_LoadTexture(renderer, CHAR_KEYBOARD_HOVER);
     if (!game->psManetteTex)
-        game->psManetteTex = load_texture_first(renderer, "buttons/manette.png", CHAR_MANETTE_NORMAL_1, CHAR_MANETTE_NORMAL_3);
+        game->psManetteTex = ps_load_texture_first(renderer, "buttons/manette.png", CHAR_MANETTE_NORMAL_1, CHAR_MANETTE_NORMAL_3);
     if (!game->psManetteHoverTex)
         game->psManetteHoverTex = IMG_LoadTexture(renderer, CHAR_MANETTE_HOVER);
     if (!game->psSourisTex)
-        game->psSourisTex = load_texture_first(renderer, "buttons/souris.png", CHAR_SOURIS_NORMAL_1, CHAR_SOURIS_NORMAL_3);
+        game->psSourisTex = ps_load_texture_first(renderer, "buttons/souris.png", CHAR_SOURIS_NORMAL_1, CHAR_SOURIS_NORMAL_3);
     if (!game->psSourisHoverTex)
         game->psSourisHoverTex = IMG_LoadTexture(renderer, CHAR_SOURIS_HOVER);
     if (!game->psScoreBtnTex)
@@ -487,7 +487,7 @@ int PlayerSelect_Charger(Game *game, SDL_Renderer *renderer) {
         }
     }
     if (!game->psNamePlayer1Tex)
-        game->psNamePlayer1Tex = load_texture_first(renderer, "buttons/mr_harry_name.png", "buttons/harry_name_pixels.png", NULL);
+        game->psNamePlayer1Tex = ps_load_texture_first(renderer, "buttons/mr_harry_name.png", "buttons/harry_name_pixels.png", NULL);
     if (!game->psNamePlayer2Tex)
         game->psNamePlayer2Tex = IMG_LoadTexture(renderer, "buttons/marvin_name_pixel_no_bg.png");
     if (!game->psHelpIconTex)
@@ -495,21 +495,21 @@ int PlayerSelect_Charger(Game *game, SDL_Renderer *renderer) {
     if (!game->psHelpButtonTex)
         game->psHelpButtonTex = IMG_LoadTexture(renderer, "buttons/help_button.png");
     if (!ps_settings_p1_tex)
-        ps_settings_p1_tex = load_texture_first(renderer,
+        ps_settings_p1_tex = ps_load_texture_first(renderer,
                                                 "buttons/remake_player_stats_mr_harry.png",
                                                 "buttons/try.jpg",
                                                 NULL);
     if (!ps_settings_p2_tex)
-        ps_settings_p2_tex = load_texture_first(renderer,
+        ps_settings_p2_tex = ps_load_texture_first(renderer,
                                                 "buttons/remake_stats_mr_marvin.png",
                                                 "buttons/remake_player_stats_mr_marvin.png",
                                                 "buttons/try.jpg");
     if (!ps_not_ready_tex)
         ps_not_ready_tex = IMG_LoadTexture(renderer, "buttons/not_ready_button.png");
     if (!ps_ready_tex)
-        ps_ready_tex = load_texture_first(renderer, "buttons/ready.png", "buttons/ready_button.png", NULL);
+        ps_ready_tex = ps_load_texture_first(renderer, "buttons/ready.png", "buttons/ready_button.png", NULL);
     if (!ps_arrow_right_tex)
-        ps_arrow_right_tex = load_texture_first(renderer, "buttons/arrow right.jpg", "buttons/arrow_right.jpg", NULL);
+        ps_arrow_right_tex = ps_load_texture_first(renderer, "buttons/arrow right.jpg", "buttons/arrow_right.jpg", NULL);
     if (!ps_movement_settings_tex)
         ps_movement_settings_tex = IMG_LoadTexture(renderer, "buttons/movement_settings.png");
     if (!ps_send_button_tex)

@@ -377,7 +377,7 @@ void Liberation(Game *game, SDL_Window *window, SDL_Renderer *renderer) {
     SDL_Quit();
 }
 
-static int joueurs_non_configures(const Game *game) {
+int joueurs_non_configures(const Game *game) {
     if (!game || !game->ps_loaded) return 1;
     if (strlen(game->player1_name) == 0) return 1;
     return game->player_mode != 1 && strlen(game->player2_name) == 0;

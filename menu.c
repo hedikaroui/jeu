@@ -2,12 +2,12 @@
 #include <math.h>
 #include <string.h>
 
-static MenuUiState menuUi = {
+MenuUiState menuUi = {
     .hoveredButton = -1,
     .clickedButton = -1
 };
 
-static int create_text_texture(SDL_Renderer *renderer, const char *font_path, int pt_size,
+int menu_create_text_texture(SDL_Renderer *renderer, const char *font_path, int pt_size,
                                const char *text, SDL_Color color,
                                SDL_Texture **texture, SDL_Rect *rect) {
     TTF_Font *font = NULL;
@@ -37,13 +37,13 @@ static int create_text_texture(SDL_Renderer *renderer, const char *font_path, in
     return (*texture != NULL);
 }
 
-static SDL_Rect menu_gift_rect(int w, int h, Uint32 ticks) {
+SDL_Rect menu_gift_rect(int w, int h, Uint32 ticks) {
     int shakeX = (int)(3.0 * sin((double)ticks / 55.0));
     int shakeY = (int)(2.0 * cos((double)ticks / 70.0));
     return (SDL_Rect){w - 170 + shakeX, h - 170 + shakeY, 140, 140};
 }
 
-static void menu_init_background_assets(Game *game, SDL_Renderer *renderer) {
+void menu_init_background_assets(Game *game, SDL_Renderer *renderer) {
     SDL_Color title_color = {245, 245, 245, 255};
 
     game->background = IMG_LoadTexture(renderer, GAME_ASSETS.backgrounds.menu);
@@ -53,16 +53,16 @@ static void menu_init_background_assets(Game *game, SDL_Renderer *renderer) {
     game->titleRect = (SDL_Rect){0, 0, 0, 0};
     game->trapRect = (SDL_Rect){0, 0, 0, 0};
 
-    if (!create_text_texture(renderer, GAME_ASSETS.fonts.system_bold, 54,
+    if (!menu_create_text_texture(renderer, GAME_ASSETS.fonts.system_bold, 54,
                              "MENU PRINCIPAL", title_color,
                              &game->titleTexture, &game->titleRect)) {
-        create_text_texture(renderer, GAME_ASSETS.fonts.system_regular, 54,
+        menu_create_text_texture(renderer, GAME_ASSETS.fonts.system_regular, 54,
                             "MENU PRINCIPAL", title_color,
                             &game->titleTexture, &game->titleRect);
     }
 }
 
-static void menu_init_button_assets(Game *game, SDL_Renderer *renderer) {
+void menu_init_button_assets(Game *game, SDL_Renderer *renderer) {
     for (int i = 0; i < 5; i++) {
         game->buttons[i].normalTex = IMG_LoadTexture(renderer, MENU_BUTTON_NORMAL[i]);
         game->buttons[i].hoverTex = IMG_LoadTexture(renderer, MENU_BUTTON_HOVER[i]);
@@ -71,7 +71,7 @@ static void menu_init_button_assets(Game *game, SDL_Renderer *renderer) {
     }
 }
 
-static void menu_sync_layout(Game *game) {
+void menu_sync_layout(Game *game) {
     int w = WIDTH;
     int h = HEIGHT;
     int bw = 430;
@@ -118,7 +118,7 @@ static void menu_sync_layout(Game *game) {
     menuUi.giftRect = menu_gift_rect(w, h, SDL_GetTicks());
 }
 
-static MenuCommand menu_command_from_button(int button_index) {
+MenuCommand menu_command_from_button(int button_index) {
     switch (button_index) {
         case 0: return MENU_COMMAND_PLAY;
         case 1: return MENU_COMMAND_OPTIONS;

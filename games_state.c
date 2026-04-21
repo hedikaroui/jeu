@@ -2,17 +2,17 @@
 #include "assets_catalog.h"
 #include <stdio.h>
 
-static SDL_Rect quizBtnARect = {120, 430, 150, 120};
-static SDL_Rect quizBtnBRect = {325, 430, 150, 120};
-static SDL_Rect quizBtnCRect = {530, 430, 150, 120};
-static int quizHoverA = 0, quizHoverB = 0, quizHoverC = 0;
-static int quizSelected = -1;
+SDL_Rect quizBtnARect = {120, 430, 150, 120};
+SDL_Rect quizBtnBRect = {325, 430, 150, 120};
+SDL_Rect quizBtnCRect = {530, 430, 150, 120};
+int quizHoverA = 0, quizHoverB = 0, quizHoverC = 0;
+int quizSelected = -1;
 
-static int point_in_rect(SDL_Rect r, int x, int y) {
+int games_state_point_in_rect(SDL_Rect r, int x, int y) {
     return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
 
-static void draw_center_text(SDL_Renderer *renderer, TTF_Font *font, const char *text,
+void games_state_draw_center_text(SDL_Renderer *renderer, TTF_Font *font, const char *text,
                              SDL_Color color, SDL_Rect box) {
     if (!font || !text || !*text) return;
     SDL_Surface *surf = TTF_RenderUTF8_Blended(font, text, color);
@@ -74,24 +74,24 @@ void Games_LectureEntree(Game *game) {
 
         if (e.type == SDL_MOUSEMOTION && game->currentState == STATE_ENIGME_QUIZ) {
             int mx = e.motion.x, my = e.motion.y;
-            quizHoverA = point_in_rect(quizBtnARect, mx, my);
-            quizHoverB = point_in_rect(quizBtnBRect, mx, my);
-            quizHoverC = point_in_rect(quizBtnCRect, mx, my);
+            quizHoverA = games_state_point_in_rect(quizBtnARect, mx, my);
+            quizHoverB = games_state_point_in_rect(quizBtnBRect, mx, my);
+            quizHoverC = games_state_point_in_rect(quizBtnCRect, mx, my);
         }
 
         if (e.type == SDL_MOUSEBUTTONDOWN) {
             int mx = e.button.x, my = e.button.y;
             if (game->currentState == STATE_ENIGME_QUIZ) {
-                if (point_in_rect(quizBtnARect, mx, my)) {
+                if (games_state_point_in_rect(quizBtnARect, mx, my)) {
                     quizSelected = 0;
                     if (game->quizBeep) Mix_PlayChannel(-1, game->quizBeep, 0);
                     if (game->quizLaugh) Mix_PlayChannel(-1, game->quizLaugh, 0);
                 }
-                if (point_in_rect(quizBtnBRect, mx, my)) {
+                if (games_state_point_in_rect(quizBtnBRect, mx, my)) {
                     quizSelected = 1;
                     if (game->quizBeep2) Mix_PlayChannel(-1, game->quizBeep2, 0);
                 }
-                if (point_in_rect(quizBtnCRect, mx, my)) {
+                if (games_state_point_in_rect(quizBtnCRect, mx, my)) {
                     quizSelected = 2;
                     if (game->quizBeep) Mix_PlayChannel(-1, game->quizBeep, 0);
                     if (game->quizLaugh) Mix_PlayChannel(-1, game->quizLaugh, 0);
@@ -111,10 +111,10 @@ void Games_Affichage(Game *game, SDL_Renderer *renderer) {
         if (game->quizFont) {
             SDL_Color black = {0, 0, 0, 255};
             SDL_Color white = {255, 255, 255, 255};
-            draw_center_text(renderer, game->quizFont,
+            games_state_draw_center_text(renderer, game->quizFont,
                              "QUEL OBJET KEVIN MET-IL SUR LA POIGNEE ?",
                              black, (SDL_Rect){100, 70, WIDTH - 200, 70});
-            draw_center_text(renderer, game->quizFont,
+            games_state_draw_center_text(renderer, game->quizFont,
                              "A: Bouilloire   B: Fer a repasser   C: Radiateur",
                              white, (SDL_Rect){50, 140, WIDTH - 100, 40});
         }
@@ -133,7 +133,7 @@ void Games_Affichage(Game *game, SDL_Renderer *renderer) {
                 ? (SDL_Color){30, 220, 30, 255}
                 : (SDL_Color){240, 30, 30, 255};
             const char *msg = (quizSelected == 1) ? "BRAVO ! Bonne reponse." : "FAUX ! Reessayez.";
-            draw_center_text(renderer, game->quizFont, msg, col, (SDL_Rect){120, 280, WIDTH - 240, 50});
+            games_state_draw_center_text(renderer, game->quizFont, msg, col, (SDL_Rect){120, 280, WIDTH - 240, 50});
         }
     } else {
         if (game->quizBg1) SDL_RenderCopy(renderer, game->quizBg1, NULL, NULL);

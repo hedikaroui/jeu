@@ -13,36 +13,33 @@
 #define WIDTH 1280
 #define HEIGHT 720
 
-typedef enum {
-    MAIN_STATE_MENU,
-    MAIN_STATE_GAME,
-    MAIN_STATE_SCORE,
-    MAIN_STATE_HISTORY,
-    MAIN_STATE_PLAYER
-} GameState;
+typedef int GameState;
+#define MAIN_STATE_MENU 0
+#define MAIN_STATE_GAME 1
+#define MAIN_STATE_SCORE 2
+#define MAIN_STATE_HISTORY 3
+#define MAIN_STATE_PLAYER 4
 
-typedef enum {
-    STATE_MENU,
-    STATE_OPTIONS,
-    STATE_SAVE,
-    STATE_SAVE_CHOICE,
-    STATE_PLAYER,
-    STATE_PLAYER_CONFIG,
-    STATE_SCORES_INPUT,
-    STATE_SCORES_LIST,
-    STATE_START_PLAY,
-    STATE_ENIGME,
-    STATE_ENIGME_QUIZ,
-    STATE_HISTOIRE,
-    STATE_DISPLAY_CHOICE,
-    STATE_GAME,
-    STATE_QUIT,
-
-    STATE_SCORES = STATE_SCORES_INPUT,
-    STATE_PLAYER_SELECT = STATE_PLAYER_CONFIG,
-    STATE_GAMES = STATE_ENIGME,
-    STATE_CREDITS = STATE_HISTOIRE
-} GameSubState;
+typedef int GameSubState;
+#define STATE_MENU 0
+#define STATE_OPTIONS 1
+#define STATE_SAVE 2
+#define STATE_SAVE_CHOICE 3
+#define STATE_PLAYER 4
+#define STATE_PLAYER_CONFIG 5
+#define STATE_SCORES_INPUT 6
+#define STATE_SCORES_LIST 7
+#define STATE_START_PLAY 8
+#define STATE_ENIGME 9
+#define STATE_ENIGME_QUIZ 10
+#define STATE_HISTOIRE 11
+#define STATE_DISPLAY_CHOICE 12
+#define STATE_GAME 13
+#define STATE_QUIT 14
+#define STATE_SCORES STATE_SCORES_INPUT
+#define STATE_PLAYER_SELECT STATE_PLAYER_CONFIG
+#define STATE_GAMES STATE_ENIGME
+#define STATE_CREDITS STATE_HISTOIRE
 
 typedef struct {
     Uint8 r, g, b, a;
@@ -107,15 +104,14 @@ typedef struct {
     SDL_Texture *textureCliq;
 } SaveButton;
 
-typedef enum {
-    MENU_COMMAND_NONE,
-    MENU_COMMAND_PLAY,
-    MENU_COMMAND_OPTIONS,
-    MENU_COMMAND_SAVE,
-    MENU_COMMAND_SCORES,
-    MENU_COMMAND_GIFT,
-    MENU_COMMAND_QUIT
-} MenuCommand;
+typedef int MenuCommand;
+#define MENU_COMMAND_NONE 0
+#define MENU_COMMAND_PLAY 1
+#define MENU_COMMAND_OPTIONS 2
+#define MENU_COMMAND_SAVE 3
+#define MENU_COMMAND_SCORES 4
+#define MENU_COMMAND_GIFT 5
+#define MENU_COMMAND_QUIT 6
 
 typedef struct {
     SDL_Rect backgroundRect;
@@ -128,14 +124,13 @@ typedef struct {
     MenuCommand pendingCommand;
 } MenuUiState;
 
-typedef enum {
-    OPTIONS_COMMAND_NONE,
-    OPTIONS_COMMAND_BACK,
-    OPTIONS_COMMAND_VOLUME_DOWN,
-    OPTIONS_COMMAND_VOLUME_MUTE,
-    OPTIONS_COMMAND_VOLUME_UP,
-    OPTIONS_COMMAND_FULLSCREEN
-} OptionsCommand;
+typedef int OptionsCommand;
+#define OPTIONS_COMMAND_NONE 0
+#define OPTIONS_COMMAND_BACK 1
+#define OPTIONS_COMMAND_VOLUME_DOWN 2
+#define OPTIONS_COMMAND_VOLUME_MUTE 3
+#define OPTIONS_COMMAND_VOLUME_UP 4
+#define OPTIONS_COMMAND_FULLSCREEN 5
 
 typedef struct {
     SDL_Rect backgroundRect;
@@ -150,30 +145,28 @@ typedef struct {
     OptionsCommand pendingCommand;
 } OptionsUiState;
 
-typedef enum {
-    KEY_ACTION_WALK = 0,
-    KEY_ACTION_JUMP,
-    KEY_ACTION_RUN,
-    KEY_ACTION_DOWN,
-    KEY_ACTION_DANCE,
-    KEY_ACTION_COUNT
-} KeyAction;
+typedef int KeyAction;
+#define KEY_ACTION_WALK 0
+#define KEY_ACTION_JUMP 1
+#define KEY_ACTION_RUN 2
+#define KEY_ACTION_DOWN 3
+#define KEY_ACTION_DANCE 4
+#define KEY_ACTION_COUNT 5
 
 #define GAME_CONTROL_KEYBOARD 0
 #define GAME_CONTROL_CONTROLLER 1
 #define GAME_CONTROL_MOUSE 2
 
-typedef enum {
-    GAME_MOVE_STOP = 0,
-    GAME_MOVE_WALK,
-    GAME_MOVE_RUN,
-    GAME_MOVE_RUN_BACK,
-    GAME_MOVE_WALK_BACK,
-    GAME_MOVE_JUMP,
-    GAME_MOVE_JUMP_BACK,
-    GAME_MOVE_DAMAGE,
-    GAME_MOVE_LAY_DOWN
-} GameMovement;
+typedef int GameMovement;
+#define GAME_MOVE_STOP 0
+#define GAME_MOVE_WALK 1
+#define GAME_MOVE_RUN 2
+#define GAME_MOVE_RUN_BACK 3
+#define GAME_MOVE_WALK_BACK 4
+#define GAME_MOVE_JUMP 5
+#define GAME_MOVE_JUMP_BACK 6
+#define GAME_MOVE_DAMAGE 7
+#define GAME_MOVE_LAY_DOWN 8
 
 #define GAME_OBSTACLE_COUNT 2
 
@@ -284,13 +277,12 @@ typedef struct {
     SDL_Rect position_acc;
 } StartPlayMover;
 
-typedef enum {
-    MOVEMENT_WALK = 0,
-    MOVEMENT_RUN,
-    MOVEMENT_DANCE,
-    MOVEMENT_JUMP,
-    MOVEMENT_COUNT
-} MovementType;
+typedef int MovementType;
+#define MOVEMENT_WALK 0
+#define MOVEMENT_RUN 1
+#define MOVEMENT_DANCE 2
+#define MOVEMENT_JUMP 3
+#define MOVEMENT_COUNT 4
 
 typedef struct {
     const char *name;
@@ -533,7 +525,7 @@ void Games_LectureEntree(Game *game);
 void Games_Affichage(Game *game, SDL_Renderer *renderer);
 void Games_MiseAJour(Game *game);
 
-const AnimationMovement *animation_get_movement(MovementType type);
+const AnimationMovement *animation_get_movement(int type);
 const AnimationMovement *animation_find_movement(const char *name);
 size_t animation_movement_count(void);
 
