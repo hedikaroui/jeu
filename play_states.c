@@ -47,10 +47,27 @@ int gameHazardsRngSeeded = 0;
 #define STARTPLAY_WALK_FRAME_BONUS_DIV 28
 #define STARTPLAY_WALK_FRAME_BONUS_CAP 95
 #define STARTPLAY_WALK_FRAME_MIN_MS 40
-#define GAME_ENIGME_INTRO_DELAY_MS 3000u
+#define GAME_ENIGME_DELAY_MIN_MS 9000u
+#define GAME_ENIGME_DELAY_MAX_MS 25000u
+#define GAME_ENERGY_MAX 100.0
+#define GAME_ENERGY_RECHARGE_PER_SEC 17.0
+#define GAME_ENERGY_RECHARGE_REST_PER_SEC 28.0
+#define GAME_ENERGY_DRAIN_FAST_PER_SEC 44.0
+#define GAME_ENERGY_DRAIN_SLOW_PER_SEC 18.0
+#define GAME_ENERGY_TIRED_MS 1800u
+#define GAME_PICKUP_MS 780u
+#define GAME_SNOWBALL_STATE_FALLING 1
+#define GAME_SNOWBALL_STATE_GROUNDED 2
+#define GAME_SNOWBALL_BOX_W 60
+#define GAME_SNOWBALL_BOX_H 60
+#define GAME_SNOWBALL_FALL_SPEED_MIN 12
+#define GAME_SNOWBALL_FALL_SPEED_MAX 18
+#define GAME_SNOWBALL_SPAWN_MIN_MS 2200u
+#define GAME_SNOWBALL_SPAWN_MAX_MS 5600u
 
 Uint32 game_enigme_intro_tick = 0;
 int game_enigme_intro_shown = 0;
+Uint32 game_next_snowball_spawn_tick = 0;
 
 const char *startplay_wave_msgs[] = {
     "HEEY ,YOU ",
@@ -118,6 +135,7 @@ void game_load_marvin_character(SDL_Renderer *renderer, Personnage *p);
 void game_load_enemy_textures(Game *game, SDL_Renderer *renderer);
 void game_load_obstacle_assets(Game *game, SDL_Renderer *renderer);
 int game_update_damage_state(Personnage *p, Uint32 now);
+int game_update_pickup_state(Personnage *p, Uint32 now);
 void game_draw_character(SDL_Renderer *renderer, Personnage *p);
 void game_draw_enemy_sprite(SDL_Renderer *renderer, const GameEnemy *enemy,
                                    SDL_Rect dst_rect);
@@ -126,6 +144,26 @@ void game_draw_minimap_player_marker(SDL_Renderer *renderer, const Personnage *p
                                             SDL_Rect marker, SDL_Color fallback,
                                             int move_dir, Uint32 now);
 void games_reset_menu_state(void);
+void game_schedule_next_enigme(Uint32 now);
+void game_wrap_horizontal_position(int *x, int obj_width, int world_width);
+double game_wrapped_delta_x(double from_x, double to_x, int world_width);
+int game_collision_trigonometric_wrapped(SDL_Rect a, SDL_Rect b, int world_width);
+void game_reset_character_energy(Personnage *p);
+int game_character_is_tired(const Personnage *p, Uint32 now);
+int game_update_character_stamina(Personnage *p, int wants_run, int has_move_input, Uint32 dt, Uint32 now);
+int game_find_pickable_snowball_slot(const Game *game, const Personnage *p,
+                                            Uint32 now, double *distance_sq);
+int game_handle_snowball_pickup_input(Game *game, Uint32 now);
+void game_schedule_next_snowball_spawn(Uint32 now);
+void game_draw_snowball_inventory(Game *game, SDL_Renderer *renderer,
+                                         const Personnage *p,
+                                         int x, int y, int size);
+void game_render_pickup_prompt_for_player(Game *game, SDL_Renderer *renderer,
+                                                 const Personnage *p,
+                                                 SDL_Rect draw_rect);
+void game_draw_energy_bar(Game *game, SDL_Renderer *renderer, const Personnage *p,
+                                 int x, int y, int width, int height);
+void game_move_animation(Personnage *p, Uint32 now);
 
 void start_play_reload_texture(SDL_Renderer *renderer, SDL_Texture **dst, const char *path) {
     if (!dst) return;
@@ -341,10 +379,12 @@ void start_play_move_mover(Uint32 dt_ms) {
 
 void game_sync_start_play_character(Game *game) {
     Personnage *p;
+    Uint32 now;
 
     if (!game) return;
 
     p = &game->gameCharacter;
+    now = SDL_GetTicks();
     p->position = startPlayPlayerRect;
     p->groundY = (int)lround(STARTPLAY_PLAYER_Y);
     p->facing = startPlayAnim.facing;
@@ -353,6 +393,14 @@ void game_sync_start_play_character(Game *game) {
         p->up = 0;
         p->moving = 0;
         p->position.y = p->groundY;
+        return;
+    }
+
+    if (game_character_is_tired(p, now)) {
+        p->up = 0;
+        p->moving = 0;
+        p->position.y = p->groundY;
+        p->movementState = GAME_MOVE_TIRED;
         return;
     }
 
@@ -512,6 +560,7 @@ int StartPlay_Charger(Game *game, SDL_Renderer *renderer) {
     game->gameCharacter.damageActive = 0;
     game->gameCharacter.damageStartTick = 0;
     game->gameCharacter.damageInvulnUntil = 0;
+    game_reset_character_energy(&game->gameCharacter);
     game->gameCharacter.frameIndex = 0;
     game->gameCharacter.lastFrameTick = SDL_GetTicks();
     if (!startPlayAnim.dance_loop_sfx) {
@@ -573,8 +622,7 @@ int StartPlay_Charger(Game *game, SDL_Renderer *renderer) {
     startPlayLastTick = startPlayIntroStart;
     start_play_reset_mover();
     if (game->player_mode == 1) {
-        game_enigme_intro_tick = startPlayIntroStart + GAME_ENIGME_INTRO_DELAY_MS;
-        game_enigme_intro_shown = 0;
+        game_schedule_next_enigme(startPlayIntroStart);
     }
     game_sync_start_play_character(game);
     game_reset_enemy_obstacles(game);
@@ -590,8 +638,7 @@ void StartPlay_LectureEntree(Game *game) {
         startPlayLastTick = startPlayIntroStart;
         start_play_reset_mover();
         if (game && game->player_mode == 1) {
-            game_enigme_intro_tick = startPlayIntroStart + GAME_ENIGME_INTRO_DELAY_MS;
-            game_enigme_intro_shown = 0;
+            game_schedule_next_enigme(startPlayIntroStart);
         }
     }
 
@@ -644,6 +691,12 @@ void StartPlay_LectureEntree(Game *game) {
     game_update_minimap_spark(now);
 
     if (game && game->player_mode == 1 &&
+        game_enigme_intro_shown &&
+        game_enigme_intro_tick == 0) {
+        game_schedule_next_enigme(now);
+    }
+
+    if (game && game->player_mode == 1 &&
         !game_enigme_intro_shown &&
         game_enigme_intro_tick != 0 &&
         now >= game_enigme_intro_tick) {
@@ -673,6 +726,7 @@ void StartPlay_LectureEntree(Game *game) {
         startPlayAnim.running = 0;
         startPlayAnim.idle_state = STARTPLAY_IDLE_NONE;
         if (still_damaged) {
+            game_update_character_stamina(&game->gameCharacter, 0, 0, dt, now);
             game_update_world_hazards_motion(game, dt, now);
             return;
         }
@@ -685,7 +739,8 @@ void StartPlay_LectureEntree(Game *game) {
     int dance_pressed = game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_DANCE]);
     int jump_pressed = startPlayPendingJump ||
                        game_key_pressed(keys, game->keyBindings[0][KEY_ACTION_JUMP]);
-    int has_move_input = left_pressed || right_pressed;
+    int has_move_input = ((left_pressed && !right_pressed) || (right_pressed && !left_pressed));
+    int effective_run_pressed;
 
     if (game_player_uses_mouse(game, 0)) {
         game_mouse_direction_for_rect(startPlayPlayerRect,
@@ -693,7 +748,25 @@ void StartPlay_LectureEntree(Game *game) {
                                       &right_pressed,
                                       &run_pressed);
         jump_pressed = startPlayPendingJump;
-        has_move_input = left_pressed || right_pressed;
+        has_move_input = ((left_pressed && !right_pressed) || (right_pressed && !left_pressed));
+    }
+
+    effective_run_pressed = game_update_character_stamina(&game->gameCharacter, run_pressed, has_move_input, dt, now);
+    if (game_character_is_tired(&game->gameCharacter, now)) {
+        startPlayMover.acceleration = 0.0;
+        startPlayMover.vitesse = 0.0;
+        startPlayJumping = 0;
+        startPlayPendingJump = 0;
+        startPlayAnim.moving = 0;
+        startPlayAnim.running = 0;
+        startPlayAnim.idle_state = STARTPLAY_IDLE_NONE;
+        startPlayPlayerRect.y = (int)lround(STARTPLAY_PLAYER_Y);
+        startPlayMover.y = STARTPLAY_PLAYER_Y;
+        startPlayMover.position_acc = startPlayPlayerRect;
+        game_sync_start_play_character(game);
+        game_move_animation(&game->gameCharacter, now);
+        game_update_world_hazards(game, dt, now);
+        return;
     }
 
     if (jump_pressed && !startPlayJumping) {
@@ -726,21 +799,21 @@ void StartPlay_LectureEntree(Game *game) {
     }
 
     double hold_factor = 1.0 + ((double)startPlayAnim.move_hold_ms / STARTPLAY_HOLD_FACTOR_DIV);
-    if (run_pressed && has_move_input) hold_factor = STARTPLAY_HOLD_FACTOR_MAX;
+    if (effective_run_pressed && has_move_input) hold_factor = STARTPLAY_HOLD_FACTOR_MAX;
     if (hold_factor > STARTPLAY_HOLD_FACTOR_MAX) hold_factor = STARTPLAY_HOLD_FACTOR_MAX;
     double accel = STARTPLAY_BASE_ACCEL * hold_factor;
-    if (run_pressed && has_move_input) accel = STARTPLAY_RUN_ACCEL;
+    if (effective_run_pressed && has_move_input) accel = STARTPLAY_RUN_ACCEL;
 
     if (startPlayJumping) {
         startPlayMover.acceleration = 0.0;
         startPlayMover.vitesse = 0.0;
     } else if (left_pressed && !right_pressed) {
         startPlayMover.acceleration = -accel;
-        if (run_pressed) startPlayMover.vitesse = -STARTPLAY_RUN_MAX_SPEED;
+        if (effective_run_pressed) startPlayMover.vitesse = -STARTPLAY_RUN_MAX_SPEED;
         startPlayAnim.facing = -1;
     } else if (right_pressed && !left_pressed) {
         startPlayMover.acceleration = accel;
-        if (run_pressed) startPlayMover.vitesse = STARTPLAY_RUN_MAX_SPEED;
+        if (effective_run_pressed) startPlayMover.vitesse = STARTPLAY_RUN_MAX_SPEED;
         startPlayAnim.facing = 1;
     } else {
         startPlayMover.acceleration = 0.0;
@@ -751,7 +824,7 @@ void StartPlay_LectureEntree(Game *game) {
     if (!startPlayJumping) start_play_move_mover(dt);
 
     {
-        double max_speed = (run_pressed && has_move_input)
+        double max_speed = (effective_run_pressed && has_move_input)
             ? STARTPLAY_RUN_MAX_SPEED
             : STARTPLAY_BASE_MAX_SPEED + hold_factor * STARTPLAY_MAX_SPEED_BONUS;
         if (startPlayMover.vitesse > max_speed) startPlayMover.vitesse = max_speed;
@@ -768,7 +841,7 @@ void StartPlay_LectureEntree(Game *game) {
     }
 
     startPlayAnim.moving = !startPlayJumping && (has_move_input || fabs(startPlayMover.vitesse) > 8.0);
-    startPlayAnim.running = startPlayAnim.moving && has_move_input && run_pressed;
+    startPlayAnim.running = startPlayAnim.moving && has_move_input && effective_run_pressed;
     if (startPlayMover.vitesse < -8.0) startPlayAnim.facing = -1;
     if (startPlayMover.vitesse > 8.0) startPlayAnim.facing = 1;
 
@@ -948,7 +1021,7 @@ void StartPlay_Affichage(Game *game, SDL_Renderer *renderer) {
             reverse_sheet = (startPlayAnim.facing < 0);
         }
 
-        if (game && game->gameCharacter.damageActive) {
+        if (game && (game->gameCharacter.damageActive || game->gameCharacter.movementState == GAME_MOVE_TIRED)) {
             game_draw_character(renderer, &game->gameCharacter);
         } else if (active_sheet && rows > 0 && cols > 0 && frame_w > 0 && frame_h > 0) {
             int frame_count = rows * cols;
@@ -1005,6 +1078,12 @@ void StartPlay_Affichage(Game *game, SDL_Renderer *renderer) {
             }
         }
 
+        if (game) {
+            game_draw_energy_bar(game, renderer, &game->gameCharacter,
+                                 x0, bottom_icons_y + 12, 240, 22);
+            bottom_icons_y += 42;
+        }
+
         if (startPlayAnim.coin_tex) {
             int coin_w = 42;
             int coin_h = 42;
@@ -1034,10 +1113,8 @@ void StartPlay_Affichage(Game *game, SDL_Renderer *renderer) {
 }
 
 void StartPlay_MiseAJour(Game *game) {
-    if (startPlayPlayerRect.x < 0) startPlayPlayerRect.x = 0;
     if (startPlayPlayerRect.y < 0) startPlayPlayerRect.y = 0;
-    if (startPlayPlayerRect.x + startPlayPlayerRect.w > WIDTH)
-        startPlayPlayerRect.x = WIDTH - startPlayPlayerRect.w;
+    game_wrap_horizontal_position(&startPlayPlayerRect.x, startPlayPlayerRect.w, WIDTH);
     if (startPlayPlayerRect.y + startPlayPlayerRect.h > HEIGHT)
         startPlayPlayerRect.y = HEIGHT - startPlayPlayerRect.h;
 
@@ -1090,9 +1167,10 @@ int game_jump_latch = 0;
 #define GAME_ENEMY_SHEET_COLS 5
 #define GAME_ENEMY_BOX_W 155
 #define GAME_ENEMY_BOX_H 155
-#define GAME_ENEMY_ALERT_DISTANCE 285
-#define GAME_ENEMY_FOLLOW_SPEED 3
-#define GAME_ENEMY_FLEE_SPEED 5
+#define GAME_ENEMY_ALERT_DISTANCE 340
+#define GAME_ENEMY_KEEP_DISTANCE 260
+#define GAME_ENEMY_FOLLOW_SPEED 18
+#define GAME_ENEMY_FLEE_SPEED 24
 #define GAME_ENEMY_ANIM_STAND 0
 #define GAME_ENEMY_ANIM_WALK 1
 #define GAME_ENEMY_ANIM_RUN 2
@@ -1221,6 +1299,100 @@ void game_draw_text_at(SDL_Renderer *renderer, TTF_Font *font, const char *text,
     SDL_FreeSurface(surf);
 }
 
+void game_draw_snowball_inventory(Game *game, SDL_Renderer *renderer,
+                                         const Personnage *p,
+                                         int x, int y, int size) {
+    SDL_Rect badge;
+    SDL_Rect icon;
+
+    if (!game || !renderer || !p || !p->hasSnowball || !game->gameFallingTex || size <= 0) return;
+
+    badge = (SDL_Rect){x - 4, y - 4, size + 8, size + 8};
+    icon = (SDL_Rect){x, y, size, size};
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 12, 18, 26, 215);
+    SDL_RenderFillRect(renderer, &badge);
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 80);
+    SDL_RenderDrawRect(renderer, &badge);
+    SDL_RenderCopy(renderer, game->gameFallingTex, NULL, &icon);
+}
+
+void game_render_pickup_prompt_for_player(Game *game, SDL_Renderer *renderer,
+                                                 const Personnage *p,
+                                                 SDL_Rect draw_rect) {
+    SDL_Rect viewport;
+    SDL_Rect box;
+    int slot;
+
+    if (!game || !renderer || !p || !game->font) return;
+
+    slot = game_find_pickable_snowball_slot(game, p, SDL_GetTicks(), NULL);
+    if (slot < 0) return;
+
+    SDL_RenderGetViewport(renderer, &viewport);
+    box = (SDL_Rect){draw_rect.x + draw_rect.w / 2 - 132, draw_rect.y - 44, 264, 30};
+    if (box.x < 10) box.x = 10;
+    if (box.x + box.w > viewport.w - 10) box.x = viewport.w - box.w - 10;
+    if (box.y < 10) box.y = draw_rect.y + draw_rect.h + 8;
+    if (box.y + box.h > viewport.h - 10) box.y = viewport.h - box.h - 10;
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 12, 18, 26, 215);
+    SDL_RenderFillRect(renderer, &box);
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 90);
+    SDL_RenderDrawRect(renderer, &box);
+    game_draw_center_text(renderer, game->font, "Press X to pick snowball",
+                          (SDL_Color){255, 255, 255, 255}, box);
+}
+
+void game_draw_energy_bar(Game *game, SDL_Renderer *renderer, const Personnage *p,
+                                 int x, int y, int width, int height) {
+    SDL_Rect outer;
+    SDL_Rect inner;
+    SDL_Rect fill;
+    double ratio;
+    SDL_Color label_color = {245, 245, 245, 255};
+    SDL_Color fill_color;
+
+    if (!renderer || !p || width <= 6 || height <= 6) return;
+
+    ratio = p->energy / GAME_ENERGY_MAX;
+    if (ratio < 0.0) ratio = 0.0;
+    if (ratio > 1.0) ratio = 1.0;
+
+    if (ratio > 0.65) fill_color = (SDL_Color){70, 220, 120, 255};
+    else if (ratio > 0.3) fill_color = (SDL_Color){245, 190, 55, 255};
+    else fill_color = (SDL_Color){235, 80, 70, 255};
+
+    outer = (SDL_Rect){x, y, width, height};
+    inner = (SDL_Rect){x + 3, y + 3, width - 6, height - 6};
+    fill = inner;
+    fill.w = (int)lround((double)inner.w * ratio);
+    if (fill.w < 0) fill.w = 0;
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 8, 12, 18, 210);
+    SDL_RenderFillRect(renderer, &outer);
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 70);
+    SDL_RenderDrawRect(renderer, &outer);
+
+    SDL_SetRenderDrawColor(renderer, 22, 32, 40, 220);
+    SDL_RenderFillRect(renderer, &inner);
+    if (fill.w > 0) {
+        SDL_SetRenderDrawColor(renderer, fill_color.r, fill_color.g, fill_color.b, fill_color.a);
+        SDL_RenderFillRect(renderer, &fill);
+    }
+
+    if (game && game->font) {
+        game_draw_text_at(renderer, game->font, "Energy", label_color, x, y - 24);
+        if (game_character_is_tired(p, SDL_GetTicks())) {
+            game_draw_text_at(renderer, game->font, "Resting...", (SDL_Color){255, 220, 120, 255},
+                              x + width + 12, y + 2);
+        }
+    }
+}
+
 void duo_render_time(Game *game, SDL_Renderer *renderer, int x, int y) {
     char buf[32];
     Uint32 seconds = (SDL_GetTicks() - duoStartTime) / 1000u;
@@ -1279,11 +1451,9 @@ void game_render_background(Game *game, SDL_Renderer *renderer, SDL_Rect dst, in
     if (render_h < dst.h) render_h = dst.h;
     if (render_h < 1) render_h = dst.h;
 
-    if (focus_x < 0) focus_x = 0;
-    if (focus_x > WIDTH) focus_x = WIDTH;
     if (focus_y < 0) focus_y = 0;
     if (focus_y > HEIGHT) focus_y = HEIGHT;
-    if (render_w > 1) {
+    if (render_w > 1 && WIDTH > 0) {
         offset_x = (int)lround(((double)focus_x / (double)WIDTH) * (double)(render_w - 1));
         offset_x %= render_w;
         if (offset_x < 0) offset_x += render_w;
@@ -1314,6 +1484,16 @@ int game_clampi(int value, int min_value, int max_value) {
     if (value < min_value) return min_value;
     if (value > max_value) return max_value;
     return value;
+}
+
+void game_wrap_horizontal_position(int *x, int obj_width, int world_width) {
+    int span;
+
+    if (!x || obj_width <= 0 || world_width <= 0) return;
+
+    span = world_width + obj_width;
+    while (*x > world_width) *x -= span;
+    while (*x + obj_width < 0) *x += span;
 }
 
 void game_minimap_ensure_layout(void) {
@@ -2097,23 +2277,8 @@ void game_load_enemy_textures(Game *game, SDL_Renderer *renderer) {
 void game_load_obstacle_assets(Game *game, SDL_Renderer *renderer) {
     if (!game || !renderer) return;
 
-    if (!game->gameSpiderTex) {
-        game->gameSpiderTex = game_load_sprite_texture_first(
-            renderer,
-            "enemyobtacle/spider.png",
-            "enemyobtacle/tree.png");
-    }
     if (!game->gameFallingTex) {
-        game->gameFallingTex = game_load_sprite_texture_first(
-            renderer,
-            "enemyobtacle/falling.png",
-            "enemyobtacle/spider.png");
-    }
-    if (!game->gameObstacleHitSound) {
-        game->gameObstacleHitSound = Mix_LoadWAV("enemyobtacle/sound.wav");
-        if (!game->gameObstacleHitSound) {
-            game->gameObstacleHitSound = Mix_LoadWAV("songs/sonbref.wav");
-        }
+        game->gameFallingTex = IMG_LoadTexture(renderer, "obstacles/snow_ball.png");
     }
 }
 
@@ -2172,6 +2337,13 @@ SDL_Texture *game_minimap_player_texture(const Personnage *player,
     switch (player->movementState) {
         case GAME_MOVE_LAY_DOWN:
             texture = player->layDownTexture ? player->layDownTexture : player->damageTexture;
+            break;
+        case GAME_MOVE_TIRED:
+            texture = player->tiredTexture ? player->tiredTexture : player->layDownTexture;
+            break;
+        case GAME_MOVE_PICKUP:
+            texture = player->pickupTexture ? player->pickupTexture : player->idleTexture;
+            if (player->facing < 0 && flip) *flip = SDL_FLIP_HORIZONTAL;
             break;
         case GAME_MOVE_DAMAGE:
             texture = player->damageTexture;
@@ -2433,6 +2605,14 @@ void game_destroy_character_textures(Personnage *p) {
         game_forget_sprite_texture(p->layDownTexture);
         SDL_DestroyTexture(p->layDownTexture);
     }
+    if (p->tiredTexture) {
+        game_forget_sprite_texture(p->tiredTexture);
+        SDL_DestroyTexture(p->tiredTexture);
+    }
+    if (p->pickupTexture) {
+        game_forget_sprite_texture(p->pickupTexture);
+        SDL_DestroyTexture(p->pickupTexture);
+    }
     p->idleTexture = NULL;
     p->idleBackTexture = NULL;
     p->walkTexture = NULL;
@@ -2443,6 +2623,8 @@ void game_destroy_character_textures(Personnage *p) {
     p->jumpBackTexture = NULL;
     p->damageTexture = NULL;
     p->layDownTexture = NULL;
+    p->tiredTexture = NULL;
+    p->pickupTexture = NULL;
 }
 
 void game_load_harry_character(SDL_Renderer *renderer, Personnage *p) {
@@ -2457,6 +2639,8 @@ void game_load_harry_character(SDL_Renderer *renderer, Personnage *p) {
     p->jumpBackTexture = game_load_sprite_texture(renderer, "spritesheet_characters/mr_harry_jump_back_transparent.png");
     p->damageTexture = game_load_sprite_texture(renderer, "spritesheet_characters/harry-damage.png");
     p->layDownTexture = game_load_sprite_texture(renderer, "spritesheet_characters/harry-lay_down.png");
+    p->tiredTexture = game_load_sprite_texture(renderer, "spritesheet_characters/mr harry-kneel.png");
+    p->pickupTexture = game_load_sprite_texture(renderer, "spritesheet_characters/mr harry-pickup.png");
 }
 
 void game_load_marvin_character(SDL_Renderer *renderer, Personnage *p) {
@@ -2475,6 +2659,8 @@ void game_load_marvin_character(SDL_Renderer *renderer, Personnage *p) {
         "spritesheet_characters/marvin-jump -reverse.png");
     p->damageTexture = game_load_sprite_texture(renderer, "spritesheet_characters/marvin-damage.png");
     p->layDownTexture = game_load_sprite_texture(renderer, "spritesheet_characters/marvin-lay_down.png");
+    p->tiredTexture = game_load_sprite_texture(renderer, "spritesheet_characters/marvin-kneel.png");
+    p->pickupTexture = game_load_sprite_texture(renderer, "spritesheet_characters/marvin-pickup.png");
 }
 
 void game_state_reset_character(Personnage *p) {
@@ -2505,6 +2691,11 @@ void game_state_reset_character(Personnage *p) {
     p->damageActive = 0;
     p->damageStartTick = 0;
     p->damageInvulnUntil = 0;
+    p->pickupActive = 0;
+    p->pickupStartTick = 0;
+    p->pickupPendingSnowball = 0;
+    p->hasSnowball = 0;
+    game_reset_character_energy(p);
     game_jump_latch = 0;
 }
 
@@ -2614,8 +2805,6 @@ void game_move_jump_up(Personnage *p, Uint32 now) {
     p->jumpDir = 0;
     game_set_movement(p, (p->facing < 0) ? GAME_MOVE_JUMP_BACK : GAME_MOVE_JUMP, now);
 }
-
-void game_move_animation(Personnage *p, Uint32 now);
 
 void game_finish_jump(Personnage *p, Uint32 now) {
     if (!p) return;
@@ -2780,6 +2969,14 @@ void game_move_animation(Personnage *p, Uint32 now) {
             frame_delay = 180u;
             frame_count = GAME_SHEET_ROWS * GAME_SHEET_COLS;
             break;
+        case GAME_MOVE_TIRED:
+            frame_delay = 110u;
+            frame_count = GAME_SHEET_ROWS * GAME_SHEET_COLS;
+            break;
+        case GAME_MOVE_PICKUP:
+            frame_delay = 80u;
+            frame_count = GAME_SHEET_ROWS * GAME_SHEET_COLS;
+            break;
         case GAME_MOVE_WALK:
         case GAME_MOVE_WALK_BACK:
         default:
@@ -2800,12 +2997,34 @@ void game_update_character_controls(Personnage *p, int left_pressed, int right_p
                                            Uint32 dt, Uint32 now,
                                            int owner_index) {
     int hit_border = 0;
+    int has_move_input;
+    int effective_run_modifier;
 
     if (!p) return;
 
     if (game_update_damage_state(p, now)) {
-        if (p->position.x < 0) p->position.x = 0;
-        if (p->position.x + p->position.w > WIDTH) p->position.x = WIDTH - p->position.w;
+        game_update_character_stamina(p, 0, 0, dt, now);
+        game_wrap_horizontal_position(&p->position.x, p->position.w, WIDTH);
+        return;
+    }
+
+    if (game_update_pickup_state(p, now)) {
+        game_update_character_stamina(p, 0, 0, dt, now);
+        game_wrap_horizontal_position(&p->position.x, p->position.w, WIDTH);
+        return;
+    }
+
+    has_move_input = ((left_pressed && !right_pressed) || (right_pressed && !left_pressed));
+    effective_run_modifier = game_update_character_stamina(p, run_modifier, has_move_input, dt, now);
+    if (game_character_is_tired(p, now)) {
+        p->pendingJump = 0;
+        p->up = 0;
+        p->jumpPhase = 0;
+        p->moving = 0;
+        p->position.y = p->groundY;
+        game_set_movement(p, GAME_MOVE_TIRED, now);
+        game_wrap_horizontal_position(&p->position.x, p->position.w, WIDTH);
+        game_move_animation(p, now);
         return;
     }
 
@@ -2823,24 +3042,17 @@ void game_update_character_controls(Personnage *p, int left_pressed, int right_p
         p->position.y = p->groundY;
         p->moving = 0;
         if (left_pressed && !right_pressed) {
-            if (run_modifier) game_move_run_back(p, run_step, now);
+            if (effective_run_modifier) game_move_run_back(p, run_step, now);
             else game_move_walk_back(p, walk_step, now);
         } else if (right_pressed && !left_pressed) {
-            if (run_modifier) game_move_run(p, run_step, now);
+            if (effective_run_modifier) game_move_run(p, run_step, now);
             else game_move_walk(p, walk_step, now);
         } else {
             game_move_stop(p, now);
         }
     }
 
-    if (p->position.x < 0) {
-        p->position.x = 0;
-        hit_border = 1;
-    }
-    if (p->position.x + p->position.w > WIDTH) {
-        p->position.x = WIDTH - p->position.w;
-        hit_border = 1;
-    }
+    game_wrap_horizontal_position(&p->position.x, p->position.w, WIDTH);
     if (p->position.y < 0) {
         p->position.y = 0;
         hit_border = 1;
@@ -2878,6 +3090,29 @@ void game_draw_character(SDL_Renderer *renderer, Personnage *p) {
                                           p->frameIndex, p->position);
             else if (p->idleTexture)
                 game_draw_sheet_full_cell(renderer, p->idleTexture, 0, p->position);
+            break;
+        case GAME_MOVE_TIRED:
+            if (p->tiredTexture)
+                game_draw_sheet_full_cell(renderer, p->tiredTexture,
+                                          p->frameIndex, p->position);
+            else if (p->layDownTexture)
+                game_draw_sheet_full_cell(renderer, p->layDownTexture,
+                                          p->frameIndex, p->position);
+            else if (p->idleTexture)
+                game_draw_sheet_full_cell(renderer, p->idleTexture, 0, p->position);
+            break;
+        case GAME_MOVE_PICKUP:
+            if (p->pickupTexture) {
+                if (p->facing < 0) {
+                    game_draw_sheet_full_cell_reverse(renderer, p->pickupTexture,
+                                                      p->frameIndex, p->position);
+                } else {
+                    game_draw_sheet_full_cell(renderer, p->pickupTexture,
+                                              p->frameIndex, p->position);
+                }
+            } else if (p->idleTexture) {
+                game_draw_sheet_full_cell(renderer, p->idleTexture, 0, p->position);
+            }
             break;
         case GAME_MOVE_JUMP_BACK:
             if (p->jumpBackTexture)
@@ -2955,12 +3190,41 @@ void game_seed_hazards_random_once(void) {
     }
 }
 
+Uint32 game_random_between_u32(Uint32 min_value, Uint32 max_value) {
+    Uint32 span;
+
+    if (max_value <= min_value) return min_value;
+    span = max_value - min_value + 1u;
+    return min_value + (Uint32)(rand() % (int)span);
+}
+
+void game_schedule_next_enigme(Uint32 now) {
+    Uint32 delay;
+
+    game_seed_hazards_random_once();
+    delay = game_random_between_u32(GAME_ENIGME_DELAY_MIN_MS, GAME_ENIGME_DELAY_MAX_MS);
+    game_enigme_intro_tick = now + delay;
+    game_enigme_intro_shown = 0;
+}
+
 double game_rect_center_x(SDL_Rect rect) {
     return (double)rect.x + (double)rect.w / 2.0;
 }
 
 double game_rect_center_y(SDL_Rect rect) {
     return (double)rect.y + (double)rect.h / 2.0;
+}
+
+double game_wrapped_delta_x(double from_x, double to_x, int world_width) {
+    double dx = to_x - from_x;
+    double half_width;
+
+    if (world_width <= 0) return dx;
+
+    half_width = (double)world_width / 2.0;
+    while (dx > half_width) dx -= (double)world_width;
+    while (dx < -half_width) dx += (double)world_width;
+    return dx;
 }
 
 double game_collision_circle_radius(SDL_Rect rect, double factor) {
@@ -2975,6 +3239,274 @@ int game_collision_trigonometric(SDL_Rect a, SDL_Rect b) {
     double radius_sum = game_collision_circle_radius(a, 0.36) +
                         game_collision_circle_radius(b, 0.42);
     return (dx * dx + dy * dy) <= (radius_sum * radius_sum);
+}
+
+int game_collision_trigonometric_wrapped(SDL_Rect a, SDL_Rect b, int world_width) {
+    double dx = game_wrapped_delta_x(game_rect_center_x(a), game_rect_center_x(b), world_width);
+    double dy = game_rect_center_y(a) - game_rect_center_y(b);
+    double radius_sum = game_collision_circle_radius(a, 0.36) +
+                        game_collision_circle_radius(b, 0.42);
+    return (dx * dx + dy * dy) <= (radius_sum * radius_sum);
+}
+
+void game_schedule_next_snowball_spawn(Uint32 now) {
+    Uint32 delay;
+
+    game_seed_hazards_random_once();
+    delay = game_random_between_u32(GAME_SNOWBALL_SPAWN_MIN_MS,
+                                    GAME_SNOWBALL_SPAWN_MAX_MS);
+    game_next_snowball_spawn_tick = now + delay;
+}
+
+int game_find_free_snowball_slot(Game *game) {
+    if (!game) return -1;
+
+    for (int i = 0; i < GAME_OBSTACLE_COUNT; i++) {
+        if (!game->gameObstacles[i].active) return i;
+    }
+    return -1;
+}
+
+void game_spawn_snowball(Game *game, int slot, int ground_line, Uint32 now) {
+    GameObstacle *obs;
+    int max_x;
+    int max_y;
+
+    if (!game || slot < 0 || slot >= GAME_OBSTACLE_COUNT || !game->gameFallingTex) return;
+
+    obs = &game->gameObstacles[slot];
+    memset(obs, 0, sizeof(*obs));
+
+    max_x = WIDTH - GAME_SNOWBALL_BOX_W - 36;
+    if (max_x < 36) max_x = 36;
+    max_y = ground_line - GAME_SNOWBALL_BOX_H;
+    if (max_y < 0) max_y = 0;
+
+    obs->texture = game->gameFallingTex;
+    obs->position = (SDL_Rect){
+        (int)game_random_between_u32(36u, (Uint32)max_x),
+        -(int)game_random_between_u32(120u, 320u),
+        GAME_SNOWBALL_BOX_W,
+        GAME_SNOWBALL_BOX_H
+    };
+    obs->active = 1;
+    obs->speed = (int)game_random_between_u32(GAME_SNOWBALL_FALL_SPEED_MIN,
+                                              GAME_SNOWBALL_FALL_SPEED_MAX);
+    obs->baseY = max_y;
+    obs->state = GAME_SNOWBALL_STATE_FALLING;
+    obs->stateTick = now;
+}
+
+void game_update_snowball(GameObstacle *obs, Uint32 dt, int ground_line, Uint32 now) {
+    int step;
+    int ground_y;
+
+    if (!obs || !obs->active || !obs->texture) return;
+    if (obs->state != GAME_SNOWBALL_STATE_FALLING) return;
+
+    step = (int)lround((double)obs->speed * ((double)dt / 16.0));
+    if (step < 1) step = 1;
+
+    ground_y = ground_line - obs->position.h;
+    if (ground_y < 0) ground_y = 0;
+
+    obs->position.y += step;
+    if (obs->position.y >= ground_y) {
+        obs->position.y = ground_y;
+        obs->state = GAME_SNOWBALL_STATE_GROUNDED;
+        obs->stateTick = now;
+    }
+}
+
+double game_snowball_pickup_distance_sq(const Personnage *p, const GameObstacle *obs) {
+    double dx;
+    double dy;
+
+    if (!p || !obs) return 1000000000.0;
+
+    dx = game_rect_center_x(p->position) - game_rect_center_x(obs->position);
+    dy = game_rect_center_y(p->position) - game_rect_center_y(obs->position);
+    return dx * dx + dy * dy;
+}
+
+int game_player_near_grounded_snowball(const Personnage *p, const GameObstacle *obs) {
+    SDL_Rect player_zone;
+    SDL_Rect pickup_zone;
+
+    if (!p || !obs || !obs->active || obs->state != GAME_SNOWBALL_STATE_GROUNDED) return 0;
+
+    player_zone = p->position;
+    player_zone.x -= 16;
+    player_zone.w += 32;
+    player_zone.y += player_zone.h / 3;
+    player_zone.h -= player_zone.h / 3;
+    if (player_zone.h < 24) player_zone.h = 24;
+
+    pickup_zone = obs->position;
+    pickup_zone.x -= 10;
+    pickup_zone.y -= 8;
+    pickup_zone.w += 20;
+    pickup_zone.h += 16;
+
+    if (SDL_HasIntersection(&player_zone, &pickup_zone)) return 1;
+    return game_snowball_pickup_distance_sq(p, obs) <= 9800.0;
+}
+
+int game_find_pickable_snowball_slot(const Game *game, const Personnage *p, Uint32 now,
+                                            double *distance_sq) {
+    int best_slot = -1;
+    double best_distance = 1000000000.0;
+
+    if (distance_sq) *distance_sq = best_distance;
+    if (!game || !p) return -1;
+    if (p->hasSnowball || p->pickupActive || p->damageActive || game_character_is_tired(p, now)) {
+        return -1;
+    }
+
+    for (int i = 0; i < GAME_OBSTACLE_COUNT; i++) {
+        const GameObstacle *obs = &game->gameObstacles[i];
+        double candidate_distance;
+
+        if (!game_player_near_grounded_snowball(p, obs)) continue;
+
+        candidate_distance = game_snowball_pickup_distance_sq(p, obs);
+        if (candidate_distance < best_distance) {
+            best_distance = candidate_distance;
+            best_slot = i;
+        }
+    }
+
+    if (distance_sq) *distance_sq = best_distance;
+    return best_slot;
+}
+
+int game_trigger_character_pickup(Personnage *p, Uint32 now) {
+    if (!p) return 0;
+    if (p->hasSnowball || p->pickupActive || p->damageActive || game_character_is_tired(p, now)) {
+        return 0;
+    }
+
+    p->pickupActive = 1;
+    p->pickupStartTick = now;
+    p->pickupPendingSnowball = 1;
+    p->up = 0;
+    p->jumpPhase = 0;
+    p->pendingJump = 0;
+    p->moving = 0;
+    p->position.y = p->groundY;
+    game_set_movement(p, GAME_MOVE_PICKUP, now);
+    return 1;
+}
+
+int game_update_pickup_state(Personnage *p, Uint32 now) {
+    Uint32 elapsed;
+
+    if (!p || !p->pickupActive) return 0;
+
+    elapsed = now - p->pickupStartTick;
+    p->up = 0;
+    p->jumpPhase = 0;
+    p->pendingJump = 0;
+    p->moving = 0;
+    p->position.y = p->groundY;
+
+    if (elapsed >= GAME_PICKUP_MS) {
+        p->pickupActive = 0;
+        if (p->pickupPendingSnowball) {
+            p->hasSnowball = 1;
+            p->pickupPendingSnowball = 0;
+        }
+        game_set_movement(p, GAME_MOVE_STOP, now);
+        return 0;
+    }
+
+    game_set_movement(p, GAME_MOVE_PICKUP, now);
+    game_move_animation(p, now);
+    return 1;
+}
+
+int game_handle_snowball_pickup_input(Game *game, Uint32 now) {
+    Personnage *target = NULL;
+    int slot = -1;
+    double p1_distance = 1000000000.0;
+    double p2_distance = 1000000000.0;
+    int p1_slot;
+    int p2_slot = -1;
+
+    if (!game) return 0;
+
+    p1_slot = game_find_pickable_snowball_slot(game, &game->gameCharacter, now, &p1_distance);
+    if (game->player_mode != 1) {
+        p2_slot = game_find_pickable_snowball_slot(game, &game->gameCharacter2, now, &p2_distance);
+    }
+
+    if (p1_slot < 0 && p2_slot < 0) return 0;
+
+    if (p2_slot >= 0 && (p1_slot < 0 || p2_distance < p1_distance)) {
+        target = &game->gameCharacter2;
+        slot = p2_slot;
+    } else {
+        target = &game->gameCharacter;
+        slot = p1_slot;
+    }
+
+    if (!target || slot < 0 || slot >= GAME_OBSTACLE_COUNT) return 0;
+    if (!game_trigger_character_pickup(target, now)) return 0;
+
+    memset(&game->gameObstacles[slot], 0, sizeof(game->gameObstacles[slot]));
+    return 1;
+}
+
+void game_reset_character_energy(Personnage *p) {
+    if (!p) return;
+    p->energy = GAME_ENERGY_MAX;
+    p->tiredUntil = 0;
+}
+
+int game_character_is_tired(const Personnage *p, Uint32 now) {
+    if (!p) return 0;
+    return now < p->tiredUntil;
+}
+
+int game_update_character_stamina(Personnage *p, int wants_run, int has_move_input, Uint32 dt, Uint32 now) {
+    double dt_sec;
+    double fullness;
+    double drain_per_sec;
+
+    if (!p) return 0;
+
+    if (p->energy < 0.0) p->energy = 0.0;
+    if (p->energy > GAME_ENERGY_MAX) p->energy = GAME_ENERGY_MAX;
+
+    dt_sec = (double)dt / 1000.0;
+    if (dt_sec < 0.0) dt_sec = 0.0;
+
+    if (game_character_is_tired(p, now)) {
+        p->energy += GAME_ENERGY_RECHARGE_REST_PER_SEC * dt_sec;
+        if (p->energy > GAME_ENERGY_MAX) p->energy = GAME_ENERGY_MAX;
+        return 0;
+    }
+
+    if (wants_run && has_move_input && p->energy > 0.0) {
+        fullness = p->energy / GAME_ENERGY_MAX;
+        if (fullness < 0.0) fullness = 0.0;
+        if (fullness > 1.0) fullness = 1.0;
+        drain_per_sec = GAME_ENERGY_DRAIN_FAST_PER_SEC -
+                        fullness * (GAME_ENERGY_DRAIN_FAST_PER_SEC - GAME_ENERGY_DRAIN_SLOW_PER_SEC);
+        p->energy -= drain_per_sec * dt_sec;
+        if (p->energy <= 0.0) {
+            p->energy = 0.0;
+            p->tiredUntil = now + GAME_ENERGY_TIRED_MS;
+            p->frameIndex = 0;
+            p->lastFrameTick = now;
+            return 0;
+        }
+        return 1;
+    }
+
+    p->energy += GAME_ENERGY_RECHARGE_PER_SEC * dt_sec;
+    if (p->energy > GAME_ENERGY_MAX) p->energy = GAME_ENERGY_MAX;
+    return 0;
 }
 
 int game_character_moving_right(const Personnage *p) {
@@ -3132,26 +3664,25 @@ void game_reset_enemy_obstacles(Game *game) {
     game->gameEnemy.lastFrameTick = SDL_GetTicks();
     game_enemy_refresh_frame_geometry(&game->gameEnemy);
     game_enemy_update_sprite(&game->gameEnemy);
-
-    game_init_obstacle(&game->gameObstacles[0], game->gameSpiderTex,
-                       330, ground_line - 96, 96, 96, 2);
-    game_init_obstacle(&game->gameObstacles[1], game->gameFallingTex,
-                       800, ground_line - 150, 108, 108, 3);
+    for (int i = 0; i < GAME_OBSTACLE_COUNT; i++) {
+        memset(&game->gameObstacles[i], 0, sizeof(game->gameObstacles[i]));
+    }
+    game_schedule_next_snowball_spawn(SDL_GetTicks());
 }
 
 void game_update_enemy(Game *game, Uint32 dt, Uint32 now) {
     GameEnemy *enemy;
     Personnage *players[2];
     int player_count;
-    int moving_right = 0;
+    int any_player_moving = 0;
     int move_dir = 0;
-    int nearest_player_backing_away = 0;
     int speed = 0;
     int step;
     int animation_state = GAME_ENEMY_ANIM_STAND;
     int frame_count;
     Uint32 frame_delay;
     double enemy_center;
+    double nearest_delta_x = 0.0;
     double nearest_distance = 1000000.0;
 
     if (!game) return;
@@ -3166,28 +3697,34 @@ void game_update_enemy(Game *game, Uint32 dt, Uint32 now) {
     for (int i = 0; i < player_count; i++) {
         Personnage *p = players[i];
         double px;
+        double dx;
         double dist;
+        int moving;
         if (!p) continue;
         px = game_rect_center_x(p->position);
-        dist = fabs(px - enemy_center);
+        dx = game_wrapped_delta_x(enemy_center, px, WIDTH);
+        dist = fabs(dx);
+        moving = game_character_moving_right(p) || game_character_moving_back(p);
+        if (moving) any_player_moving = 1;
         if (dist < nearest_distance) {
             nearest_distance = dist;
-            nearest_player_backing_away = game_character_moving_back(p);
+            nearest_delta_x = dx;
         }
-        if (game_character_moving_right(p)) moving_right = 1;
     }
 
-    if (nearest_distance <= GAME_ENEMY_ALERT_DISTANCE) {
-        move_dir = nearest_player_backing_away ? 0 : 1;
-    } else if (moving_right) {
-        move_dir = 1;
+    if (any_player_moving || nearest_distance <= GAME_ENEMY_ALERT_DISTANCE) {
+        move_dir = (nearest_delta_x >= 0.0) ? -1 : 1;
     }
 
     if (move_dir != 0) {
         speed = (nearest_distance <= GAME_ENEMY_ALERT_DISTANCE)
             ? GAME_ENEMY_FLEE_SPEED
             : GAME_ENEMY_FOLLOW_SPEED;
-        animation_state = (speed >= GAME_ENEMY_FLEE_SPEED)
+        if (nearest_distance < GAME_ENEMY_KEEP_DISTANCE) {
+            double pressure = (double)(GAME_ENEMY_KEEP_DISTANCE - nearest_distance);
+            speed += (int)lround(pressure / 18.0);
+        }
+        animation_state = (nearest_distance < GAME_ENEMY_KEEP_DISTANCE || speed >= GAME_ENEMY_FLEE_SPEED)
             ? GAME_ENEMY_ANIM_RUN
             : GAME_ENEMY_ANIM_WALK;
         step = (int)lround((double)speed * ((double)dt / 16.0));
@@ -3207,7 +3744,7 @@ void game_update_enemy(Game *game, Uint32 dt, Uint32 now) {
         enemy->lastFrameTick = now;
     }
 
-    enemy->position.x = game_clampi(enemy->position.x, 0, WIDTH - enemy->position.w);
+    game_wrap_horizontal_position(&enemy->position.x, enemy->position.w, WIDTH);
     enemy->position.y = game->gameCharacter.groundY + game->gameCharacter.position.h - enemy->position.h;
     if (enemy->position.y < 0) enemy->position.y = 0;
     game_enemy_update_sprite(enemy);
@@ -3261,16 +3798,26 @@ void game_update_obstacle_player_collision(Game *game, GameObstacle *obs,
 
 void game_update_world_hazards_motion(Game *game, Uint32 dt, Uint32 now) {
     int ground_line;
+    int slot;
 
     if (!game) return;
+
+    game_update_enemy(game, dt, now);
 
     ground_line = game->gameCharacter.groundY + game->gameCharacter.position.h;
     if (ground_line <= 0) ground_line = GAME_MONO_GROUND_LINE_Y;
 
-    game_update_enemy(game, dt, now);
+    if (game->gameFallingTex && game_next_snowball_spawn_tick != 0 &&
+        now >= game_next_snowball_spawn_tick) {
+        slot = game_find_free_snowball_slot(game);
+        if (slot >= 0) {
+            game_spawn_snowball(game, slot, ground_line, now);
+        }
+        game_schedule_next_snowball_spawn(now);
+    }
+
     for (int i = 0; i < GAME_OBSTACLE_COUNT; i++) {
-        GameObstacle *obs = &game->gameObstacles[i];
-        game_update_obstacle_motion(obs, dt, ground_line);
+        game_update_snowball(&game->gameObstacles[i], dt, ground_line, now);
     }
 }
 
@@ -3285,7 +3832,7 @@ void game_update_enemy_player_minimap_collision(Game *game, Personnage *player,
         return;
     }
 
-    colliding = game_collision_trigonometric(player->position, game->gameEnemy.position);
+    colliding = game_collision_trigonometric_wrapped(player->position, game->gameEnemy.position, WIDTH);
     if (colliding) {
         if (!game_enemy_collision_latch[owner_index]) {
             game_trigger_minimap_spark(owner_index, player->position, player->facing, now);
@@ -3306,32 +3853,19 @@ void game_update_world_hazards(Game *game, Uint32 dt, Uint32 now) {
     } else {
         game_enemy_collision_latch[1] = 0;
     }
-
-    for (int i = 0; i < GAME_OBSTACLE_COUNT; i++) {
-        GameObstacle *obs = &game->gameObstacles[i];
-        game_update_obstacle_player_collision(game, obs, &game->gameCharacter,
-                                              &obs->collidingPlayer1, now);
-        if (game->player_mode != 1) {
-            game_update_obstacle_player_collision(game, obs, &game->gameCharacter2,
-                                                  &obs->collidingPlayer2, now);
-        } else {
-            obs->collidingPlayer2 = 0;
-        }
-    }
 }
 
 void game_render_world_hazards(Game *game, SDL_Renderer *renderer) {
     if (!game || !renderer) return;
 
-    for (int i = 0; i < GAME_OBSTACLE_COUNT; i++) {
-        GameObstacle *obs = &game->gameObstacles[i];
-        if (obs->active && obs->texture) {
-            SDL_RenderCopy(renderer, obs->texture, NULL, &obs->position);
-        }
-    }
-
     if (game->gameEnemy.active && game->gameEnemy.texture) {
         game_draw_enemy_sprite(renderer, &game->gameEnemy, game->gameEnemy.position);
+    }
+
+    for (int i = 0; i < GAME_OBSTACLE_COUNT; i++) {
+        GameObstacle *obs = &game->gameObstacles[i];
+        if (!obs->active || !obs->texture) continue;
+        SDL_RenderCopy(renderer, obs->texture, NULL, &obs->position);
     }
 }
 
@@ -3407,21 +3941,19 @@ void game_render_hazards_in_panel(Game *game, SDL_Renderer *renderer,
     world_ground_line = game->gameCharacter.groundY + game->gameCharacter.position.h;
     if (world_ground_line <= 0) world_ground_line = GAME_MONO_GROUND_LINE_Y;
 
-    for (int i = 0; i < GAME_OBSTACLE_COUNT; i++) {
-        GameObstacle *obs = &game->gameObstacles[i];
-        if (obs->active && obs->texture) {
-            game_draw_world_texture_in_panel(renderer, obs->texture, NULL,
-                                             obs->position, viewport, scale,
-                                             panel_ground_line_y,
-                                             world_ground_line);
-        }
-    }
-
     if (game->gameEnemy.active && game->gameEnemy.texture) {
         game_draw_enemy_in_panel(renderer, &game->gameEnemy,
                                  viewport, scale,
                                  panel_ground_line_y,
                                  world_ground_line);
+    }
+
+    for (int i = 0; i < GAME_OBSTACLE_COUNT; i++) {
+        GameObstacle *obs = &game->gameObstacles[i];
+        if (!obs->active || !obs->texture) continue;
+        game_draw_world_texture_in_panel(renderer, obs->texture, NULL,
+                                         obs->position, viewport, scale,
+                                         panel_ground_line_y, world_ground_line);
     }
 }
 
@@ -3560,6 +4092,8 @@ void duo_render_player_panel(Game *game, SDL_Renderer *renderer, SDL_Rect viewpo
     int ground_line_y = viewport.h;
     int focus_x;
     int focus_y;
+    int world_ground_line;
+    SDL_Rect draw_rect;
 
     if (!game || !renderer || !p) return;
 
@@ -3570,12 +4104,19 @@ void duo_render_player_panel(Game *game, SDL_Renderer *renderer, SDL_Rect viewpo
     duo_render_panel_background(game, renderer, viewport, scale, focus_x, focus_y, &ground_line_y);
     game_render_hazards_in_panel(game, renderer, viewport, scale, ground_line_y);
     duo_draw_character_in_panel(renderer, p, viewport, scale, ground_line_y);
+    world_ground_line = game->gameCharacter.groundY + game->gameCharacter.position.h;
+    if (world_ground_line <= 0) world_ground_line = GAME_MONO_GROUND_LINE_Y;
+    draw_rect = game_world_rect_to_panel_rect(p->position, viewport, scale,
+                                              ground_line_y, world_ground_line);
+    game_render_pickup_prompt_for_player(game, renderer, p, draw_rect);
 
     if (life_icon) {
         SDL_Rect icon_dst = {18, 10, 60, 60};
         SDL_RenderCopy(renderer, life_icon, NULL, &icon_dst);
     }
-    if (game->font) duo_render_time(game, renderer, 18, 82);
+    game_draw_snowball_inventory(game, renderer, p, 30, 78, 34);
+    if (game->font) duo_render_time(game, renderer, 92, 24);
+    game_draw_energy_bar(game, renderer, p, 18, 118, viewport.w > 210 ? 180 : viewport.w - 36, 18);
 
     SDL_RenderSetViewport(renderer, NULL);
 }
@@ -3632,7 +4173,23 @@ void duo_render_game(Game *game, SDL_Renderer *renderer) {
     game_render_world_hazards(game, renderer);
     game_draw_character(renderer, &game->gameCharacter);
     game_draw_character(renderer, &game->gameCharacter2);
-    duo_render_time(game, renderer, 20, 20);
+    game_render_pickup_prompt_for_player(game, renderer, &game->gameCharacter,
+                                         game->gameCharacter.position);
+    game_render_pickup_prompt_for_player(game, renderer, &game->gameCharacter2,
+                                         game->gameCharacter2.position);
+
+    if (game->startPlayer1LifeTex) {
+        SDL_Rect p1_icon = {18, 10, 60, 60};
+        SDL_RenderCopy(renderer, game->startPlayer1LifeTex, NULL, &p1_icon);
+        game_draw_snowball_inventory(game, renderer, &game->gameCharacter, 30, 78, 34);
+    }
+    if (game->startPlayer2LifeTex) {
+        SDL_Rect p2_icon = {18, 128, 60, 60};
+        SDL_RenderCopy(renderer, game->startPlayer2LifeTex, NULL, &p2_icon);
+        game_draw_snowball_inventory(game, renderer, &game->gameCharacter2, 30, 196, 34);
+    }
+
+    duo_render_time(game, renderer, 104, 20);
     game_render_minimap_overlay(game, renderer, 1, game->player1Tex, NULL);
 }
 
@@ -3691,8 +4248,7 @@ int Game_Charger(Game *game, SDL_Renderer *renderer) {
     game_minimap_drag_offset_y = 0;
     game_minimap_ensure_layout();
     game->gameLastTick = SDL_GetTicks();
-    game_enigme_intro_tick = game->gameLastTick + GAME_ENIGME_INTRO_DELAY_MS;
-    game_enigme_intro_shown = 0;
+    game_schedule_next_enigme(game->gameLastTick);
     game->gameLoaded = 1;
     printf("[GAME] loaded. Custom key bindings enabled.\n");
     fflush(stdout);
@@ -3725,6 +4281,11 @@ void Game_LectureEntree(Game *game) {
             SDL_Keycode sym = e.key.keysym.sym;
             SDL_Scancode scan = e.key.keysym.scancode;
             int is_player_jump_key = 0;
+
+            if (sym == SDLK_x && game_handle_snowball_pickup_input(game, SDL_GetTicks())) {
+                continue;
+            }
+
             if (scan == game->keyBindings[0][KEY_ACTION_JUMP]) is_player_jump_key = 1;
             if (game->player_mode != 1 &&
                 scan == game->keyBindings[1][KEY_ACTION_JUMP]) is_player_jump_key = 1;
@@ -3738,7 +4299,7 @@ void Game_LectureEntree(Game *game) {
                 continue;
             }
             if (!is_player_jump_key &&
-                (sym == SDLK_x || sym == SDLK_KP_MINUS || sym == SDLK_MINUS)) {
+                (sym == SDLK_KP_MINUS || sym == SDLK_MINUS)) {
                 game->minimap_zoom -= GAME_MINIMAP_ZOOM_STEP;
                 if (game->minimap_zoom < GAME_MINIMAP_ZOOM_MIN) {
                     game->minimap_zoom = GAME_MINIMAP_ZOOM_MIN;
@@ -3785,6 +4346,10 @@ void Game_MiseAJour(Game *game) {
     dt = (game->gameLastTick == 0) ? 16u : (now - game->gameLastTick);
     game->gameLastTick = now;
     game_update_minimap_spark(now);
+
+    if (game_enigme_intro_shown && game_enigme_intro_tick == 0) {
+        game_schedule_next_enigme(now);
+    }
 
     if (!game_enigme_intro_shown &&
         game_enigme_intro_tick != 0 &&
@@ -3868,90 +4433,9 @@ void Game_Affichage(Game *game, SDL_Renderer *renderer) {
     SDL_RenderDrawLine(renderer, 0, ground_rect.y, WIDTH, ground_rect.y);
 
     game_render_world_hazards(game, renderer);
-    switch (game->gameCharacter.movementState) {
-        case GAME_MOVE_LAY_DOWN:
-            if (game->gameCharacter.layDownTexture)
-                game_draw_sheet_full_cell(renderer, game->gameCharacter.layDownTexture,
-                                          game->gameCharacter.frameIndex,
-                                          game->gameCharacter.position);
-            else if (game->gameCharacter.damageTexture)
-                game_draw_sheet_full_cell(renderer, game->gameCharacter.damageTexture,
-                                          game->gameCharacter.frameIndex,
-                                          game->gameCharacter.position);
-            break;
-        case GAME_MOVE_DAMAGE:
-            if (game->gameCharacter.damageTexture)
-                game_draw_sheet_full_cell(renderer, game->gameCharacter.damageTexture,
-                                          game->gameCharacter.frameIndex,
-                                          game->gameCharacter.position);
-            break;
-        case GAME_MOVE_JUMP_BACK:
-            if (game->gameCharacter.jumpBackTexture)
-                game_draw_sheet_frame_reverse(renderer, game->gameCharacter.jumpBackTexture,
-                                              game->gameCharacter.frameIndex, game_jump_back_crop,
-                                              game->gameCharacter.position);
-            break;
-        case GAME_MOVE_JUMP:
-            if (game->gameCharacter.jumpTexture)
-                game_draw_sheet_frame(renderer, game->gameCharacter.jumpTexture,
-                                      game->gameCharacter.frameIndex, game_jump_crop,
-                                      game->gameCharacter.position);
-            break;
-        case GAME_MOVE_RUN_BACK:
-            if (game->gameCharacter.runBackTexture)
-                game_draw_sheet_full_cell(renderer, game->gameCharacter.runBackTexture,
-                                          game->gameCharacter.frameIndex,
-                                          game->gameCharacter.position);
-            else if (game->gameCharacter.walkBackTexture)
-                game_draw_sheet_frame_reverse(renderer, game->gameCharacter.walkBackTexture,
-                                              game->gameCharacter.frameIndex, game_walk_back_crop,
-                                              game->gameCharacter.position);
-            break;
-        case GAME_MOVE_RUN:
-            if (game->gameCharacter.runTexture)
-                game_draw_sheet_full_cell(renderer, game->gameCharacter.runTexture,
-                                          game->gameCharacter.frameIndex,
-                                          game->gameCharacter.position);
-            else if (game->gameCharacter.walkTexture)
-                game_draw_sheet_frame(renderer, game->gameCharacter.walkTexture,
-                                      game->gameCharacter.frameIndex, game_walk_crop,
-                                      game->gameCharacter.position);
-            break;
-        case GAME_MOVE_WALK_BACK:
-            if (game->gameCharacter.walkBackTexture)
-                game_draw_sheet_frame_reverse(renderer, game->gameCharacter.walkBackTexture,
-                                              game->gameCharacter.frameIndex, game_walk_back_crop,
-                                              game->gameCharacter.position);
-            break;
-        case GAME_MOVE_WALK:
-            if (game->gameCharacter.walkTexture)
-                game_draw_sheet_frame(renderer, game->gameCharacter.walkTexture,
-                                      game->gameCharacter.frameIndex, game_walk_crop,
-                                      game->gameCharacter.position);
-            break;
-        case GAME_MOVE_STOP:
-        default:
-            {
-                SDL_Texture *idle_tex = (game->gameCharacter.facing < 0 && game->gameCharacter.idleBackTexture)
-                    ? game->gameCharacter.idleBackTexture
-                    : game->gameCharacter.idleTexture;
-                if (idle_tex) {
-                    if (game->gameCharacter.facing < 0 && game->gameCharacter.idleBackTexture) {
-                        game_draw_sheet_full_cell_reverse(renderer, idle_tex,
-                                                          game->gameCharacter.frameIndex,
-                                                          game->gameCharacter.position);
-                    } else {
-                        game_draw_sheet_full_cell(renderer, idle_tex,
-                                                  game->gameCharacter.frameIndex,
-                                                  game->gameCharacter.position);
-                    }
-                } else if (game->gameCharacter.walkTexture) {
-                    game_draw_sheet_frame(renderer, game->gameCharacter.walkTexture,
-                                          0, game_walk_crop, game->gameCharacter.position);
-                }
-            }
-            break;
-    }
+    game_draw_character(renderer, &game->gameCharacter);
+    game_render_pickup_prompt_for_player(game, renderer, &game->gameCharacter,
+                                         game->gameCharacter.position);
 
     solo_life_tex = (solo_second && game->startPlayer2LifeTex)
         ? game->startPlayer2LifeTex
@@ -3960,7 +4444,9 @@ void Game_Affichage(Game *game, SDL_Renderer *renderer) {
         SDL_Rect icon_dst = {18, 10, 60, 60};
         SDL_RenderCopy(renderer, solo_life_tex, NULL, &icon_dst);
     }
-    if (game->font) duo_render_time(game, renderer, 18, 82);
+    game_draw_snowball_inventory(game, renderer, &game->gameCharacter, 30, 78, 34);
+    if (game->font) duo_render_time(game, renderer, 92, 24);
+    game_draw_energy_bar(game, renderer, &game->gameCharacter, 18, 122, 240, 22);
 
     game_render_minimap_overlay(game, renderer, 0, solo_tex, NULL);
 }
@@ -4131,6 +4617,8 @@ void quiz_pick_question(void) {
     int count = quiz_question_count();
     int remaining = 0;
 
+    game_seed_hazards_random_once();
+
     if (count <= 0) {
         quizQuestionIndex = -1;
         return;
@@ -4175,6 +4663,9 @@ void games_finish_quiz(Game *game) {
 
     games_reset_menu_state();
     Mix_HaltMusic();
+    if (quizReturnState == STATE_GAME || quizReturnState == STATE_START_PLAY) {
+        game_schedule_next_enigme(SDL_GetTicks());
+    }
     Game_SetSubState(game, quizReturnState);
 }
 
@@ -4188,6 +4679,8 @@ void puzzle_setup_level(Game *game, int level) {
     int image_w = WIDTH - 360;
     int image_h = HEIGHT - 150;
     int piece_size = 140;
+
+    game_seed_hazards_random_once();
 
     (void)game;
     if (image_w < 520) image_w = 520;

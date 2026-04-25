@@ -61,6 +61,12 @@ void Game_ResetRuntime(Game *game) {
     game->gameCharacter.damageActive = 0;
     game->gameCharacter.damageStartTick = 0;
     game->gameCharacter.damageInvulnUntil = 0;
+    game->gameCharacter.energy = 0.0;
+    game->gameCharacter.tiredUntil = 0;
+    game->gameCharacter.pickupActive = 0;
+    game->gameCharacter.pickupStartTick = 0;
+    game->gameCharacter.pickupPendingSnowball = 0;
+    game->gameCharacter.hasSnowball = 0;
 
     game->gameCharacter2.up = 0;
     game->gameCharacter2.jumpPhase = 0;
@@ -80,12 +86,20 @@ void Game_ResetRuntime(Game *game) {
     game->gameCharacter2.damageActive = 0;
     game->gameCharacter2.damageStartTick = 0;
     game->gameCharacter2.damageInvulnUntil = 0;
+    game->gameCharacter2.energy = 0.0;
+    game->gameCharacter2.tiredUntil = 0;
+    game->gameCharacter2.pickupActive = 0;
+    game->gameCharacter2.pickupStartTick = 0;
+    game->gameCharacter2.pickupPendingSnowball = 0;
+    game->gameCharacter2.hasSnowball = 0;
 
     game->gameEnemy.active = 0;
     for (int i = 0; i < GAME_OBSTACLE_COUNT; i++) {
         game->gameObstacles[i].active = 0;
         game->gameObstacles[i].collidingPlayer1 = 0;
         game->gameObstacles[i].collidingPlayer2 = 0;
+        game->gameObstacles[i].state = 0;
+        game->gameObstacles[i].stateTick = 0;
     }
 }
 
@@ -349,6 +363,8 @@ void Liberation(Game *game, SDL_Window *window, SDL_Renderer *renderer) {
     if (game->gameCharacter.jumpBackTexture) SDL_DestroyTexture(game->gameCharacter.jumpBackTexture);
     if (game->gameCharacter.damageTexture) SDL_DestroyTexture(game->gameCharacter.damageTexture);
     if (game->gameCharacter.layDownTexture) SDL_DestroyTexture(game->gameCharacter.layDownTexture);
+    if (game->gameCharacter.tiredTexture) SDL_DestroyTexture(game->gameCharacter.tiredTexture);
+    if (game->gameCharacter.pickupTexture) SDL_DestroyTexture(game->gameCharacter.pickupTexture);
     if (game->gameCharacter2.idleTexture) SDL_DestroyTexture(game->gameCharacter2.idleTexture);
     if (game->gameCharacter2.idleBackTexture) SDL_DestroyTexture(game->gameCharacter2.idleBackTexture);
     if (game->gameCharacter2.walkTexture) SDL_DestroyTexture(game->gameCharacter2.walkTexture);
@@ -359,6 +375,8 @@ void Liberation(Game *game, SDL_Window *window, SDL_Renderer *renderer) {
     if (game->gameCharacter2.jumpBackTexture) SDL_DestroyTexture(game->gameCharacter2.jumpBackTexture);
     if (game->gameCharacter2.damageTexture) SDL_DestroyTexture(game->gameCharacter2.damageTexture);
     if (game->gameCharacter2.layDownTexture) SDL_DestroyTexture(game->gameCharacter2.layDownTexture);
+    if (game->gameCharacter2.tiredTexture) SDL_DestroyTexture(game->gameCharacter2.tiredTexture);
+    if (game->gameCharacter2.pickupTexture) SDL_DestroyTexture(game->gameCharacter2.pickupTexture);
     if (game->gameEnemyTex) SDL_DestroyTexture(game->gameEnemyTex);
     if (game->gameEnemyStandTex) SDL_DestroyTexture(game->gameEnemyStandTex);
     if (game->gameEnemyWalkTex) SDL_DestroyTexture(game->gameEnemyWalkTex);

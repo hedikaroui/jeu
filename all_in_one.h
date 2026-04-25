@@ -56,6 +56,8 @@ typedef struct {
     SDL_Texture *jumpBackTexture;
     SDL_Texture *damageTexture;
     SDL_Texture *layDownTexture;
+    SDL_Texture *tiredTexture;
+    SDL_Texture *pickupTexture;
     SDL_Rect position;
     int up;
     int jumpPhase;
@@ -79,6 +81,12 @@ typedef struct {
     int damageActive;
     Uint32 damageStartTick;
     Uint32 damageInvulnUntil;
+    double energy;
+    Uint32 tiredUntil;
+    int pickupActive;
+    Uint32 pickupStartTick;
+    int pickupPendingSnowball;
+    int hasSnowball;
 } Personnage;
 
 typedef struct {
@@ -167,6 +175,8 @@ typedef int GameMovement;
 #define GAME_MOVE_JUMP_BACK 6
 #define GAME_MOVE_DAMAGE 7
 #define GAME_MOVE_LAY_DOWN 8
+#define GAME_MOVE_TIRED 9
+#define GAME_MOVE_PICKUP 10
 
 #define GAME_OBSTACLE_COUNT 2
 
@@ -184,6 +194,8 @@ typedef struct {
     double amplitude;
     double frequency;
     double phase;
+    int state;
+    Uint32 stateTick;
 } GameObstacle;
 
 typedef struct {
