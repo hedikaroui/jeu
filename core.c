@@ -1,6 +1,8 @@
 #include "game.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 GameState Game_MainStateFromSubState(GameSubState subState) {
     switch (subState) {
@@ -23,6 +25,7 @@ GameState Game_MainStateFromSubState(GameSubState subState) {
             return MAIN_STATE_PLAYER;
 
         case STATE_MENU:
+        case STATE_SKIN_SELECT:
         case STATE_OPTIONS:
         case STATE_SAVE:
         case STATE_SAVE_CHOICE:
@@ -128,6 +131,8 @@ int Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer) {
         printf("Erreur renderer: %s\n", SDL_GetError());
         return 0;
     }
+
+    srand((unsigned int)(time(NULL) ^ SDL_GetPerformanceCounter()));
 
     Menu_Preparer(game, *renderer);
 
@@ -242,6 +247,10 @@ int Initialisation(Game *game, SDL_Window **window, SDL_Renderer **renderer) {
     game->quizBeep = NULL;
     game->quizBeep2 = NULL;
     game->quizLaugh = NULL;
+    game->skinSelectLoaded = 0;
+    game->selectedEnemySkinIndex = -1;
+    game->selectedEnemySkinPath[0] = '\0';
+    game->skinSelectReturnState = STATE_START_PLAY;
     memset(&game->gameCharacter, 0, sizeof(game->gameCharacter));
     Game_ResetRuntime(game);
 
@@ -386,6 +395,7 @@ void Liberation(Game *game, SDL_Window *window, SDL_Renderer *renderer) {
     if (game->gameObstacleHitSound) Mix_FreeChunk(game->gameObstacleHitSound);
 
     StartPlay_Cleanup();
+    SkinSelect_Cleanup();
 
     Mix_CloseAudio();
     TTF_Quit();
@@ -403,6 +413,10 @@ int joueurs_non_configures(const Game *game) {
 
 void GameLoop_ModuleInitialisationEtat(Game *game, SDL_Renderer *renderer) {
     switch (game->currentSubState) {
+        case STATE_SKIN_SELECT:
+            if (!game->skinSelectLoaded) SkinSelect_Charger(game, renderer);
+            break;
+
         case STATE_OPTIONS:
             if (!game->optionsLoaded) Options_Charger(game, renderer);
             break;
@@ -422,6 +436,11 @@ void GameLoop_ModuleInitialisationEtat(Game *game, SDL_Renderer *renderer) {
             break;
 
         case STATE_START_PLAY:
+            if (game->selectedEnemySkinPath[0] == '\0') {
+                game->skinSelectReturnState = STATE_START_PLAY;
+                Game_SetSubState(game, STATE_SKIN_SELECT);
+                break;
+            }
             if (!game->startPlayLoaded) StartPlay_Charger(game, renderer);
             break;
 
@@ -431,6 +450,11 @@ void GameLoop_ModuleInitialisationEtat(Game *game, SDL_Renderer *renderer) {
             break;
 
         case STATE_GAME:
+            if (game->selectedEnemySkinPath[0] == '\0') {
+                game->skinSelectReturnState = STATE_GAME;
+                Game_SetSubState(game, STATE_SKIN_SELECT);
+                break;
+            }
             if (joueurs_non_configures(game)) PlayerSelect_Charger(game, renderer);
             else if (!game->gameLoaded) Game_Charger(game, renderer);
             break;
@@ -449,6 +473,10 @@ void GameLoop_ModuleInput(Game *game, SDL_Renderer *renderer) {
     GameLoop_ModuleInitialisationEtat(game, renderer);
 
     switch (game->currentSubState) {
+        case STATE_SKIN_SELECT:
+            SkinSelect_LectureEntree(game);
+            break;
+
         case STATE_MENU:
             Menu_LectureEntree(game);
             break;
@@ -502,6 +530,10 @@ void GameLoop_ModuleInput(Game *game, SDL_Renderer *renderer) {
 
 void GameLoop_ModuleUpdate(Game *game) {
     switch (game->currentSubState) {
+        case STATE_SKIN_SELECT:
+            SkinSelect_MiseAJour(game);
+            break;
+
         case STATE_MENU:
             Menu_MiseAJour(game);
             break;
@@ -555,6 +587,10 @@ void GameLoop_ModuleAffichage(Game *game, SDL_Renderer *renderer) {
     SDL_RenderClear(renderer);
 
     switch (game->currentSubState) {
+        case STATE_SKIN_SELECT:
+            SkinSelect_Affichage(game, renderer);
+            break;
+
         case STATE_MENU:
             Menu_Affichage(game, renderer);
             break;

@@ -6,6 +6,7 @@ SRCS = main.c \
        menu.c \
        screens_menu.c \
        player_select_state.c \
+       skin_select_state.c \
        play_states.c
 
 OBJS = $(SRCS:.c=.o)

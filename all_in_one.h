@@ -36,6 +36,7 @@ typedef int GameSubState;
 #define STATE_DISPLAY_CHOICE 12
 #define STATE_GAME 13
 #define STATE_QUIT 14
+#define STATE_SKIN_SELECT 15
 #define STATE_SCORES STATE_SCORES_INPUT
 #define STATE_PLAYER_SELECT STATE_PLAYER_CONFIG
 #define STATE_GAMES STATE_ENIGME
@@ -214,6 +215,7 @@ typedef struct {
     int direction;
     int animationState;
     Uint32 lastFrameTick;
+    Uint32 playerTouchUntil;
 } GameEnemy;
 
 typedef struct {
@@ -469,6 +471,10 @@ typedef struct {
     GameObstacle gameObstacles[GAME_OBSTACLE_COUNT];
     int gameLoaded;
     Uint32 gameLastTick;
+    int skinSelectLoaded;
+    int selectedEnemySkinIndex;
+    char selectedEnemySkinPath[256];
+    GameSubState skinSelectReturnState;
 
     SDL_Window *window;
     int volume;
@@ -531,6 +537,12 @@ int Options_Charger(Game *game, SDL_Renderer *renderer);
 void Options_LectureEntree(Game *game);
 void Options_Affichage(Game *game, SDL_Renderer *renderer);
 void Options_MiseAJour(Game *game);
+
+int SkinSelect_Charger(Game *game, SDL_Renderer *renderer);
+void SkinSelect_LectureEntree(Game *game);
+void SkinSelect_Affichage(Game *game, SDL_Renderer *renderer);
+void SkinSelect_MiseAJour(Game *game);
+void SkinSelect_Cleanup(void);
 
 int Games_Charger(Game *game, SDL_Renderer *renderer);
 void Games_LectureEntree(Game *game);

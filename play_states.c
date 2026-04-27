@@ -58,12 +58,13 @@ int gameHazardsRngSeeded = 0;
 #define GAME_PICKUP_MS 780u
 #define GAME_SNOWBALL_STATE_FALLING 1
 #define GAME_SNOWBALL_STATE_GROUNDED 2
-#define GAME_SNOWBALL_BOX_W 60
-#define GAME_SNOWBALL_BOX_H 60
+#define GAME_SNOWBALL_BOX_W 40
+#define GAME_SNOWBALL_BOX_H 40
 #define GAME_SNOWBALL_FALL_SPEED_MIN 12
 #define GAME_SNOWBALL_FALL_SPEED_MAX 18
 #define GAME_SNOWBALL_SPAWN_MIN_MS 2200u
 #define GAME_SNOWBALL_SPAWN_MAX_MS 5600u
+#define GAME_ENEMY_PLAYER_TOUCH_MS 320u
 
 Uint32 game_enigme_intro_tick = 0;
 int game_enigme_intro_shown = 0;
@@ -164,6 +165,9 @@ void game_render_pickup_prompt_for_player(Game *game, SDL_Renderer *renderer,
 void game_draw_energy_bar(Game *game, SDL_Renderer *renderer, const Personnage *p,
                                  int x, int y, int width, int height);
 void game_move_animation(Personnage *p, Uint32 now);
+int game_get_sprite_frame(SDL_Texture *texture, int frame_index, SDL_Rect *src);
+void game_draw_normalized_frame(SDL_Renderer *renderer, SDL_Texture *tex,
+                                       SDL_Rect src, SDL_Rect dst);
 
 void start_play_reload_texture(SDL_Renderer *renderer, SDL_Texture **dst, const char *path) {
     if (!dst) return;
@@ -1393,6 +1397,67 @@ void game_draw_energy_bar(Game *game, SDL_Renderer *renderer, const Personnage *
     }
 }
 
+void game_draw_enemy_hud(Game *game, SDL_Renderer *renderer,
+                                int x, int y, int width) {
+    SDL_Texture *icon_tex;
+    SDL_Rect outer;
+    SDL_Rect inner;
+    SDL_Rect fill;
+    SDL_Rect icon_dst;
+    SDL_Rect icon_src;
+    int fill_width;
+    int status_value;
+    char label[64];
+
+    if (!game || !renderer || width < 120) return;
+
+    icon_tex = game->gameEnemy.standTexture ? game->gameEnemy.standTexture : game->gameEnemy.texture;
+    status_value = game->gameEnemy.active ? 100 : 0;
+
+    outer = (SDL_Rect){x + 74, y + 10, width - 74, 18};
+    inner = (SDL_Rect){outer.x + 2, outer.y + 2, outer.w - 4, outer.h - 4};
+    fill_width = (inner.w * status_value) / 100;
+    if (fill_width < 0) fill_width = 0;
+    if (fill_width > inner.w) fill_width = inner.w;
+    fill = (SDL_Rect){inner.x, inner.y, fill_width, inner.h};
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 12, 18, 26, 215);
+    SDL_RenderFillRect(renderer, &(SDL_Rect){x, y, width, 74});
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 80);
+    SDL_RenderDrawRect(renderer, &(SDL_Rect){x, y, width, 74});
+
+    if (icon_tex) {
+        if (game_get_sprite_frame(icon_tex, 0, &icon_src)) {
+            icon_dst = (SDL_Rect){x + 10, y + 7, 54, 54};
+            game_draw_normalized_frame(renderer, icon_tex, icon_src, icon_dst);
+        }
+    }
+
+    if (game->font) {
+        snprintf(label, sizeof(label), "KEVIN");
+        game_draw_text_at(renderer, game->font, label,
+                          (SDL_Color){245, 245, 245, 255}, x + 74, y - 2);
+    }
+
+    SDL_SetRenderDrawColor(renderer, 38, 44, 52, 230);
+    SDL_RenderFillRect(renderer, &outer);
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 95);
+    SDL_RenderDrawRect(renderer, &outer);
+    SDL_SetRenderDrawColor(renderer,
+                           status_value > 0 ? 220 : 100,
+                           status_value > 0 ? 70 : 100,
+                           status_value > 0 ? 70 : 100,
+                           255);
+    SDL_RenderFillRect(renderer, &fill);
+
+    if (game->font) {
+        snprintf(label, sizeof(label), "LIFE %d%%", status_value);
+        game_draw_text_at(renderer, game->font, label,
+                          (SDL_Color){245, 245, 245, 255}, x + 74, y + 28);
+    }
+}
+
 void duo_render_time(Game *game, SDL_Renderer *renderer, int x, int y) {
     char buf[32];
     Uint32 seconds = (SDL_GetTicks() - duoStartTime) / 1000u;
@@ -2251,7 +2316,26 @@ SDL_Texture *game_load_sprite_texture_first(SDL_Renderer *renderer, const char *
 }
 
 void game_load_enemy_textures(Game *game, SDL_Renderer *renderer) {
+    char stand_path[320];
+    char walk_path[320];
+    char run_path[320];
+    char jump_path[320];
+
     if (!game || !renderer) return;
+
+    if (!game->gameEnemyStandTex && game->selectedEnemySkinPath[0] != '\0') {
+        snprintf(stand_path, sizeof(stand_path), "%s/0.png", game->selectedEnemySkinPath);
+        snprintf(walk_path, sizeof(walk_path), "%s/1.png", game->selectedEnemySkinPath);
+        snprintf(run_path, sizeof(run_path), "%s/2.png", game->selectedEnemySkinPath);
+        snprintf(jump_path, sizeof(jump_path), "%s/3.png", game->selectedEnemySkinPath);
+
+        game->gameEnemyStandTex =
+            game_load_sprite_texture_first(renderer, stand_path, walk_path);
+        game->gameEnemyWalkTex =
+            game_load_sprite_texture(renderer, walk_path);
+        game->gameEnemyRunTex =
+            game_load_sprite_texture_first(renderer, run_path, walk_path);
+    }
 
     if (!game->gameEnemyStandTex) {
         game->gameEnemyStandTex =
@@ -3633,11 +3717,25 @@ void game_enemy_set_animation(GameEnemy *enemy, int animation_state, Uint32 now)
 void game_draw_enemy_sprite(SDL_Renderer *renderer, const GameEnemy *enemy,
                                    SDL_Rect dst_rect) {
     SDL_RendererFlip flip;
+    Uint32 now;
+    int touched;
 
     if (!renderer || !enemy || !enemy->texture || dst_rect.w <= 0 || dst_rect.h <= 0) return;
 
     flip = (enemy->direction == GAME_OBSTACLE_LEFT) ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE;
+    now = SDL_GetTicks();
+    touched = (enemy->playerTouchUntil > now);
+
+    if (touched) {
+        SDL_SetTextureColorMod(enemy->texture, 255, 80, 80);
+        SDL_SetTextureAlphaMod(enemy->texture, 210);
+    } else {
+        SDL_SetTextureColorMod(enemy->texture, 255, 255, 255);
+        SDL_SetTextureAlphaMod(enemy->texture, 255);
+    }
     game_draw_normalized_frame_flip(renderer, enemy->texture, enemy->sprite, dst_rect, flip);
+    SDL_SetTextureColorMod(enemy->texture, 255, 255, 255);
+    SDL_SetTextureAlphaMod(enemy->texture, 255);
 }
 
 void game_reset_enemy_obstacles(Game *game) {
@@ -3662,6 +3760,7 @@ void game_reset_enemy_obstacles(Game *game) {
     game->gameEnemy.direction = GAME_OBSTACLE_RIGHT;
     game->gameEnemy.animationState = GAME_ENEMY_ANIM_STAND;
     game->gameEnemy.lastFrameTick = SDL_GetTicks();
+    game->gameEnemy.playerTouchUntil = 0;
     game_enemy_refresh_frame_geometry(&game->gameEnemy);
     game_enemy_update_sprite(&game->gameEnemy);
     for (int i = 0; i < GAME_OBSTACLE_COUNT; i++) {
@@ -3834,6 +3933,7 @@ void game_update_enemy_player_minimap_collision(Game *game, Personnage *player,
 
     colliding = game_collision_trigonometric_wrapped(player->position, game->gameEnemy.position, WIDTH);
     if (colliding) {
+        game->gameEnemy.playerTouchUntil = now + GAME_ENEMY_PLAYER_TOUCH_MS;
         if (!game_enemy_collision_latch[owner_index]) {
             game_trigger_minimap_spark(owner_index, player->position, player->facing, now);
             game_enemy_collision_latch[owner_index] = 1;
@@ -4114,7 +4214,8 @@ void duo_render_player_panel(Game *game, SDL_Renderer *renderer, SDL_Rect viewpo
         SDL_Rect icon_dst = {18, 10, 60, 60};
         SDL_RenderCopy(renderer, life_icon, NULL, &icon_dst);
     }
-    game_draw_snowball_inventory(game, renderer, p, 30, 78, 34);
+    game_draw_enemy_hud(game, renderer, viewport.w - 250, 10, 232);
+    game_draw_snowball_inventory(game, renderer, p, 30, 78, 26);
     if (game->font) duo_render_time(game, renderer, 92, 24);
     game_draw_energy_bar(game, renderer, p, 18, 118, viewport.w > 210 ? 180 : viewport.w - 36, 18);
 
@@ -4181,13 +4282,14 @@ void duo_render_game(Game *game, SDL_Renderer *renderer) {
     if (game->startPlayer1LifeTex) {
         SDL_Rect p1_icon = {18, 10, 60, 60};
         SDL_RenderCopy(renderer, game->startPlayer1LifeTex, NULL, &p1_icon);
-        game_draw_snowball_inventory(game, renderer, &game->gameCharacter, 30, 78, 34);
+        game_draw_snowball_inventory(game, renderer, &game->gameCharacter, 30, 78, 26);
     }
     if (game->startPlayer2LifeTex) {
         SDL_Rect p2_icon = {18, 128, 60, 60};
         SDL_RenderCopy(renderer, game->startPlayer2LifeTex, NULL, &p2_icon);
-        game_draw_snowball_inventory(game, renderer, &game->gameCharacter2, 30, 196, 34);
+        game_draw_snowball_inventory(game, renderer, &game->gameCharacter2, 30, 196, 26);
     }
+    game_draw_enemy_hud(game, renderer, WIDTH - 270, 10, 252);
 
     duo_render_time(game, renderer, 104, 20);
     game_render_minimap_overlay(game, renderer, 1, game->player1Tex, NULL);
@@ -4444,7 +4546,8 @@ void Game_Affichage(Game *game, SDL_Renderer *renderer) {
         SDL_Rect icon_dst = {18, 10, 60, 60};
         SDL_RenderCopy(renderer, solo_life_tex, NULL, &icon_dst);
     }
-    game_draw_snowball_inventory(game, renderer, &game->gameCharacter, 30, 78, 34);
+    game_draw_enemy_hud(game, renderer, WIDTH - 270, 10, 252);
+    game_draw_snowball_inventory(game, renderer, &game->gameCharacter, 30, 78, 26);
     if (game->font) duo_render_time(game, renderer, 92, 24);
     game_draw_energy_bar(game, renderer, &game->gameCharacter, 18, 122, 240, 22);
 
