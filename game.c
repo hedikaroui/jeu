@@ -10,6 +10,7 @@ void Jeu_LectureEntree(Game *game)
         if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) {
             game->currentState = STATE_MENU;
             return;
+            
         }
 
         /* Hover detection */
