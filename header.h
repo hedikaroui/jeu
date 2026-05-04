@@ -18,10 +18,24 @@ typedef struct {
 } Button;
 
 typedef struct {
-    int player_x;
-    int player_y;
-    int score;
-    int lives;
+    char game_id[40];
+    char mode[16];
+    int current_level;
+    char input_device[16];
+
+    char player1_name[50];
+    char player1_character[50];
+    int player1_x;
+    int player1_y;
+    int player1_lives;
+    int player1_score;
+
+    char player2_name[50];
+    char player2_character[50];
+    int player2_x;
+    int player2_y;
+    int player2_lives;
+    int player2_score;
 } GameData;
 
 typedef struct {
