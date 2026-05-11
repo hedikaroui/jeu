@@ -24,8 +24,11 @@ int main(int argc, char *argv[])
 
     game.renderer = SDL_CreateRenderer(game.window, -1, SDL_RENDERER_ACCELERATED);
     if (!game.renderer) {
-        printf("Erreur SDL_CreateRenderer : %s\n", SDL_GetError());
-        return 1;
+        game.renderer = SDL_CreateRenderer(game.window, -1, SDL_RENDERER_SOFTWARE);
+        if (!game.renderer) {
+            printf("Erreur SDL_CreateRenderer : %s\n", SDL_GetError());
+            return 1;
+        }
     }
 
     if (!Initialisation(&game)) {

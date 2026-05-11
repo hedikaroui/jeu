@@ -25,10 +25,20 @@ typedef struct {
 } GameData;
 
 typedef struct {
+    int id;
+    char name[50];
+    int level;
+    int score;
+    char date[30];
+    int empty;
+} SaveSlot;
+
+typedef struct {
     SDL_Window   *window;
     SDL_Renderer *renderer;
 
     SDL_Texture  *background;
+    SDL_Texture  *saveBackground;
     TTF_Font     *font;
 
     SDL_Surface  *titleSurface;
@@ -38,11 +48,15 @@ typedef struct {
     Mix_Music    *music;
     Mix_Chunk    *sound;
 
-    Button buttons[4];
+    Button buttons[5];
+    SDL_Texture *loadGameGrise;
+    SaveSlot saves[4];
+    SDL_Rect slotRects[4];
 
     int running;
     int etat;
     int clic_bouton;
+    int selectedSlot;
 
     GameData game_data;
 
@@ -57,5 +71,12 @@ void MiseAJour      (SaveGame *s);
 void Liberation     (SaveGame *s);
 int  save_game      (GameData *data);
 int  load_game      (GameData *data);
+int  loadSavesFromFile(SaveGame *s);
+void displaySaveSlots(SaveGame *s);
+void selectSaveSlot(SaveGame *s, SDL_Event event);
+int  loadGameById(SaveGame *s, int id);
+int  generateUniqueId(SaveGame *s);
+int  countSavesInFile();
+int  createNewSave(SaveGame *s);
 
 #endif
