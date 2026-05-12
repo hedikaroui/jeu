@@ -1,0 +1,4 @@
+var searchData=
+[
+  ['init_91',['init',['../game_8h.html#a205e24dd0310233f9c557e8b5c7e66a5',1,'init(SDL_Renderer *renderer, Enemy *enemy, char *normalPath, int normalCols, int normalRows, char *hurtPath, int hurtCols, int hurtRows, char *playerTouchPath, char *walkPath, char *runPath, char *treePath, Obstacle *obs, char *obsPath, int x, int y, Snowball *sb, char *snowPath, Player *player, char *playerPath, int nbCols, int nbRows):&#160;source.c'],['../source_8c.html#a205e24dd0310233f9c557e8b5c7e66a5',1,'init(SDL_Renderer *renderer, Enemy *enemy, char *normalPath, int normalCols, int normalRows, char *hurtPath, int hurtCols, int hurtRows, char *playerTouchPath, char *walkPath, char *runPath, char *treePath, Obstacle *obs, char *obsPath, int x, int y, Snowball *sb, char *snowPath, Player *player, char *playerPath, int nbCols, int nbRows):&#160;source.c']]]
+];
